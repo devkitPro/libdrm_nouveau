@@ -1,0 +1,10 @@
+prefix=$(DEVKITPRO)/libdrm_nouveau
+exec_prefix=${prefix}
+includedir=${prefix}/include
+libdir=${exec_prefix}/lib
+
+Name: libdrm_nouveau
+Description: Userspace interface to nouveau kernel DRM services
+Version: 2.4.66
+Libs: -L${libdir} -ldrm_nouveau
+Cflags: -I${includedir}
