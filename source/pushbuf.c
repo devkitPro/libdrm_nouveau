@@ -158,6 +158,15 @@ pushbuf_flush(struct nouveau_pushbuf *push)
 	CALLED();
 	struct nouveau_pushbuf_priv *nvpb = nouveau_pushbuf(push);
 
+	// We need to skip the first flush to avoid out-of-memory
+	// errors on subsequent push buffers.
+	static bool first_flush = true;
+	if (first_flush)
+	{
+		first_flush = false;
+		return 0;
+	}
+
 	int ret = pushbuf_submit(push, push->channel);
 
 	TRACE("Sleeping\n");
