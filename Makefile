@@ -87,19 +87,19 @@ export INCLUDE	:=	$(foreach dir,$(INCLUDES),-I$(CURDIR)/$(dir)) \
 .PHONY: clean all
 
 #---------------------------------------------------------------------------------
-all: lib/libdrm_nouveau.a lib/libdrm_nouveaud.a
+all: lib/libdrm_nouveau.a lib/libdrm_nouveaud.a lib/pkgconfig/libdrm_nouveau.pc
 
 dist-bin: all
-	@tar --exclude=*~ -cjf libdrm_nouveau.tar.bz2 include lib libdrm_nouveau.pc
+	@tar --exclude=*~ -cjf libdrm_nouveau.tar.bz2 include lib
 
 dist-src:
-	@tar --exclude=*~ -cjf libdrm_nouveau-src.tar.bz2 include source libdrm_nouveau.pc
+	@tar --exclude=*~ -cjf libdrm_nouveau-src.tar.bz2 include source
 
 dist: dist-src dist-bin
 
 install: dist-bin
-	mkdir -p $(DEVKITPRO)/libdrm_nouveau
-	bzip2 -cd libdrm_nouveau.tar.bz2 | tar -xf - -C $(DEVKITPRO)/libdrm_nouveau
+	mkdir -p $(PORTLIBS)
+	bzip2 -cd libdrm_nouveau.tar.bz2 | tar -xf - -C $(PORTLIBS)
 
 #dox:
 #	@doxygen Doxyfile
@@ -127,6 +127,10 @@ lib/libdrm_nouveaud.a : lib debug $(SOURCES) $(INCLUDES)
 	DEPSDIR=$(CURDIR)/debug \
 	--no-print-directory -C debug \
 	-f $(CURDIR)/Makefile
+
+lib/pkgconfig/libdrm_nouveau.pc:
+	mkdir -p lib/pkgconfig
+	cp libdrm_nouveau.pc lib/pkgconfig/libdrm_nouveau.pc
 
 #---------------------------------------------------------------------------------
 clean:

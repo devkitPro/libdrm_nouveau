@@ -1,4 +1,4 @@
-prefix=$(DEVKITPRO)/libdrm_nouveau
+prefix=$(DEVKITPRO)/portlibs/switch
 exec_prefix=${prefix}
 includedir=${prefix}/include
 libdir=${exec_prefix}/lib
