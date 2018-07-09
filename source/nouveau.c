@@ -488,21 +488,3 @@ nouveau_bo_unmap(struct nouveau_bo *bo)
 	CALLED();
 	//bo->map = NULL;
 }
-
-int nouveau_3d_init(struct nouveau_device * dev)
-{
-	CALLED();
-	struct nouveau_device_priv *nvdev = nouveau_device(dev);
-	Result rc;
-
-	vnInit(&nvdev->v, &nvdev->gpu);
-	vnInit3D(&nvdev->v);
-	rc = vnSubmit(&nvdev->v);
-	if (R_FAILED(rc))
-	{
-		TRACE("Failed to init 3d context\n");
-		return -rc;
-	}
-
-	return 0;
-}

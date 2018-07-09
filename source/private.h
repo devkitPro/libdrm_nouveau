@@ -91,19 +91,12 @@ struct nouveau_device_priv {
 	uint64_t allocspace_offset;
 	Mutex lock;
 	NvGpu gpu;
-	Vn v;
 };
 
 static inline struct nouveau_device_priv *
 nouveau_device(struct nouveau_device *dev)
 {
 	return (struct nouveau_device_priv *)dev;
-}
-
-static inline NvChannel ToNvChannel(u32 fd)
-{
-	NvChannel ch = { fd, true };
-	return ch;
 }
 
 #endif

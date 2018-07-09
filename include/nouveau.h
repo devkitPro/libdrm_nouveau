@@ -271,6 +271,4 @@ struct nv04_notify {
 	uint32_t length;
 };
 
-int nouveau_3d_init(struct nouveau_device *);
-
 #endif
