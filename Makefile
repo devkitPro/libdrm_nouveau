@@ -8,6 +8,13 @@ endif
 
 include $(DEVKITPRO)/libnx/switch_rules
 
+export LIBDRM_NOUVEAU_MAJOR	:= 0
+export LIBDRM_NOUVEAU_MINOR	:= 1
+export LIBDRM_NOUVEAU_PATCH	:= 0
+
+
+VERSION	:=	$(LIBDRM_NOUVEAU_MAJOR).$(LIBDRM_NOUVEAU_MINOR).$(LIBDRM_NOUVEAU_PATCH)
+
 #---------------------------------------------------------------------------------
 # TARGET is the name of the output
 # BUILD is the directory where object files & intermediate files will be placed
@@ -37,8 +44,6 @@ CFLAGS	+=	$(INCLUDE) -DSWITCH
 CXXFLAGS	:= $(CFLAGS) -fno-rtti -fno-exceptions -std=gnu++11
 
 ASFLAGS	:=	-g $(ARCH)
-
-LIBS	:= -lnx
 
 #---------------------------------------------------------------------------------
 # list of directories containing libraries, this must be the top level containing
@@ -90,20 +95,16 @@ export INCLUDE	:=	$(foreach dir,$(INCLUDES),-I$(CURDIR)/$(dir)) \
 all: lib/libdrm_nouveau.a lib/libdrm_nouveaud.a lib/pkgconfig/libdrm_nouveau.pc
 
 dist-bin: all
-	@tar --exclude=*~ -cjf libdrm_nouveau.tar.bz2 include lib
+	@tar --exclude=*~ -cjf libdrm_nouveau-$(VERSION).tar.bz2 include lib
 
 dist-src:
-	@tar --exclude=*~ -cjf libdrm_nouveau-src.tar.bz2 include source
+	@tar --exclude=*~ -cjf libdrm_nouveau-src-$(VERSION).tar.bz2 include source Makefile libdrm_nouveau.pc
 
 dist: dist-src dist-bin
 
 install: dist-bin
-	mkdir -p $(PORTLIBS)
-	bzip2 -cd libdrm_nouveau.tar.bz2 | tar -xf - -C $(PORTLIBS)
-
-#dox:
-#	@doxygen Doxyfile
-#	@doxygen Doxyfile.internal
+	mkdir -p $(DESTDIR)$(PORTLIBS)
+	bzip2 -cd libdrm_nouveau-$(VERSION).tar.bz2 | tar -xf - -C $(DESTDIR)$(PORTLIBS)
 
 lib:
 	@[ -d $@ ] || mkdir -p $@
@@ -130,12 +131,12 @@ lib/libdrm_nouveaud.a : lib debug $(SOURCES) $(INCLUDES)
 
 lib/pkgconfig/libdrm_nouveau.pc:
 	mkdir -p lib/pkgconfig
-	cp libdrm_nouveau.pc lib/pkgconfig/libdrm_nouveau.pc
+	cp libdrm_nouveau.pc $@
 
 #---------------------------------------------------------------------------------
 clean:
 	@echo clean ...
-	@rm -fr release debug lib docs internal_docs
+	@rm -fr release debug lib
 
 #---------------------------------------------------------------------------------
 else
