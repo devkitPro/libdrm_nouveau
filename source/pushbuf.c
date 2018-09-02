@@ -148,6 +148,11 @@ pushbuf_submit(struct nouveau_pushbuf *push, struct nouveau_object *chan)
 		return -rc;
 	}
 
+	if ((int)fence.id >= 0) {
+		TRACE("Waiting on fence %u %u\n", fence.id, fence.value);
+		nvFenceWait(&fence, -1);
+	}
+
 	// TODO: Implicit fencing
 	return 0;
 }
@@ -168,9 +173,6 @@ pushbuf_flush(struct nouveau_pushbuf *push)
 	}
 
 	int ret = pushbuf_submit(push, push->channel);
-
-	TRACE("Sleeping\n");
-	svcSleepThread(1000000000ull);
 
 	// Set the start for the next command buffer
 	push->cur = nvpb->bgn;
