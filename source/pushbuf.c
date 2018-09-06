@@ -136,11 +136,11 @@ pushbuf_submit(struct nouveau_pushbuf *push, struct nouveau_object *chan)
 
 	// Calculate the number of commands to submit
 	nvpb->cmd_list.num_cmds = push->cur - nvpb->ptr;
-	TRACE("Submitting push buffer with %ld commands\n", nvpb->cmd_list.num_cmds);
+	TRACE("Submitting push buffer with %zu commands\n", nvpb->cmd_list.num_cmds);
 
 	rc = nvGpfifoSubmit(&gpu->gpfifo, &nvpb->cmd_list, &fence);
 	if (R_FAILED(rc)) {
-		TRACE("nvGpfifo rejected pushbuf: %d\n", rc);
+		TRACE("nvGpfifo rejected pushbuf: %x\n", rc);
 		static bool first_fail = true;
 		if (first_fail)
 			pushbuf_dump(nvpb->bgn, push->cur);
@@ -149,7 +149,7 @@ pushbuf_submit(struct nouveau_pushbuf *push, struct nouveau_object *chan)
 	}
 
 	if ((int)fence.id >= 0) {
-		TRACE("Waiting on fence %u %u\n", fence.id, fence.value);
+		TRACE("Waiting on fence %d %u\n", (int)fence.id, fence.value);
 		nvFenceWait(&fence, -1);
 	}
 
@@ -163,7 +163,7 @@ pushbuf_flush(struct nouveau_pushbuf *push)
 	CALLED();
 	struct nouveau_pushbuf_priv *nvpb = nouveau_pushbuf(push);
 
-	// We need to skip the first flush to avoid out-of-memory
+	// We need to skip the first flush to avoid LibnxNvidiaError_Timeout
 	// errors on subsequent push buffers.
 	static bool first_flush = true;
 	if (first_flush)

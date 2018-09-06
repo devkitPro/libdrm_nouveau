@@ -329,7 +329,7 @@ nouveau_bo_new(struct nouveau_device *dev, uint32_t flags, uint32_t align,
 	rc = nvBufferCreateRw(&nvbo->buffer, size, align, kind, &nvdev->gpu.addr_space);
 	if (R_FAILED(rc))
 	{
-		TRACE("Failed to create NvBuffer (%d)\n", rc);
+		TRACE("Failed to create NvBuffer (%x)\n", rc);
 		free(nvbo);
 		return -rc;
 	}
@@ -339,7 +339,7 @@ nouveau_bo_new(struct nouveau_device *dev, uint32_t flags, uint32_t align,
 		rc = nvBufferMapAsTexture(&nvbo->buffer, kind);
 		if (R_FAILED(rc))
 		{
-			TRACE("Failed to map NvBuffer as texture (%d)\n", rc);
+			TRACE("Failed to map NvBuffer as texture (%x)\n", rc);
 			free(nvbo);
 			return -rc;
 		}
@@ -400,7 +400,7 @@ nouveau_bo_name_ref(struct nouveau_device *dev, uint32_t name,
 		NvKind_Generic_16BX2, &bo->offset);
 	if (R_FAILED(rc))
 	{
-		TRACE("Failed to map named buffer (%d)\n", rc);
+		TRACE("Failed to map named buffer (%x)\n", rc);
 		free(nvbo);
 		return -rc;
 	}
