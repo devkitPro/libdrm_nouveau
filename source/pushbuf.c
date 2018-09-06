@@ -134,6 +134,9 @@ pushbuf_submit(struct nouveau_pushbuf *push, struct nouveau_object *chan)
 	NvFence fence;
 	Result rc;
 
+	if (push->kick_notify)
+		push->kick_notify(push);
+
 	// Calculate the number of commands to submit
 	nvpb->cmd_list.num_cmds = push->cur - nvpb->ptr;
 	TRACE("Submitting push buffer with %zu commands\n", nvpb->cmd_list.num_cmds);
