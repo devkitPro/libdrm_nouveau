@@ -137,11 +137,16 @@ pushbuf_submit(struct nouveau_pushbuf *push, struct nouveau_object *chan)
 	if (push->kick_notify)
 		push->kick_notify(push);
 
+	if (nvpb->ptr == push->cur) {
+		TRACE("Empty pushbuf submitted\n");
+		return 0;
+	}
+
 	// Calculate the number of commands to submit
 	nvpb->cmd_list.num_cmds = push->cur - nvpb->ptr;
-	TRACE("Submitting push buffer with %zu commands\n", nvpb->cmd_list.num_cmds);
+	TRACE("Submitting push buffer %p with %zu commands\n", nvpb->ptr, nvpb->cmd_list.num_cmds);
 
-	rc = nvGpfifoSubmit(&gpu->gpfifo, &nvpb->cmd_list, &fence);
+	rc = nvGpfifoSubmitCmdList(&gpu->gpfifo, &nvpb->cmd_list, 0, &fence);
 	if (R_FAILED(rc)) {
 		TRACE("nvGpfifo rejected pushbuf: %x\n", rc);
 		static bool first_fail = true;
@@ -151,10 +156,9 @@ pushbuf_submit(struct nouveau_pushbuf *push, struct nouveau_object *chan)
 		return -rc;
 	}
 
-	if ((int)fence.id >= 0) {
-		TRACE("Waiting on fence %d %u\n", (int)fence.id, fence.value);
-		nvFenceWait(&fence, -1);
-	}
+	TRACE("Got back fence %d %u\n", (int)fence.id, fence.value);
+	nvFenceWait(&fence, -1);
+	nvpb->ptr = push->cur;
 
 	// TODO: Implicit fencing
 	return 0;
@@ -164,21 +168,9 @@ static int
 pushbuf_flush(struct nouveau_pushbuf *push)
 {
 	CALLED();
-	struct nouveau_pushbuf_priv *nvpb = nouveau_pushbuf(push);
-
-	// We need to skip the first flush to avoid LibnxNvidiaError_Timeout
-	// errors on subsequent push buffers.
-	static bool first_flush = true;
-	if (first_flush)
-	{
-		first_flush = false;
-		return 0;
-	}
+	//struct nouveau_pushbuf_priv *nvpb = nouveau_pushbuf(push);
 
 	int ret = pushbuf_submit(push, push->channel);
-
-	// Set the start for the next command buffer
-	push->cur = nvpb->bgn;
 
 	return ret;
 }
@@ -270,6 +262,15 @@ nouveau_pushbuf_space(struct nouveau_pushbuf *push,
 		      uint32_t dwords, uint32_t relocs, uint32_t pushes)
 {
 	CALLED();
+	struct nouveau_pushbuf_priv *nvpb = nouveau_pushbuf(push);
+
+	if (push->cur + dwords >= push->end) {
+		TRACE("Command list is full, need a flush...");
+		pushbuf_flush(push);
+		nvCmdListReset(&nvpb->cmd_list);
+		push->cur = nvpb->bgn;
+		nvpb->ptr = nvpb->bgn;
+	}
 
 	// Unimplemented
 	return 0;
