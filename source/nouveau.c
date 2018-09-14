@@ -321,12 +321,12 @@ nouveau_bo_new(struct nouveau_device *dev, uint32_t flags, uint32_t align,
 	if (!nvbo)
 		return -ENOMEM;
 
-	// TODO: Read-only buffers?
 	NvKind kind = NvKind_Pitch;
 	if (config)
 		kind = (NvKind)config->nvc0.memtype;
+
 	TRACE("Allocating BO of size %ld, align %d, flags 0x%x and kind 0x%x\n", size, align, flags, kind);
-	rc = nvBufferCreateRw(&nvbo->buffer, size, align, kind, &nvdev->gpu.addr_space);
+	rc = nvBufferCreate(&nvbo->buffer, size, align, false, kind, &nvdev->gpu.addr_space);
 	if (R_FAILED(rc))
 	{
 		TRACE("Failed to create NvBuffer (%x)\n", rc);
@@ -354,8 +354,6 @@ nouveau_bo_new(struct nouveau_device *dev, uint32_t flags, uint32_t align,
 	bo->map = nvBufferGetCpuAddr(&nvbo->buffer);
 	nvbo->map_handle = nvBufferGetGpuAddr(&nvbo->buffer);
 	memset(bo->map, 0, bo->size);
-	armDCacheFlush(bo->map, bo->size);
-	nvBufferMakeCpuUncached(&nvbo->buffer);
 
 	if (config)
 		bo->config = *config;
@@ -396,7 +394,7 @@ nouveau_bo_name_ref(struct nouveau_device *dev, uint32_t name,
 	struct nouveau_bo *bo = &nvbo->base;
 	Result rc;
 
-	rc = nvAddressSpaceMapBuffer(&nvdev->gpu.addr_space, name,
+	rc = nvAddressSpaceMapBuffer(&nvdev->gpu.addr_space, name, 0, //NvMapBufferFlags_IsCacheable,
 		NvKind_Generic_16BX2, &bo->offset);
 	if (R_FAILED(rc))
 	{
