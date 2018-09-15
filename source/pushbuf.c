@@ -68,7 +68,6 @@ struct nouveau_pushbuf_priv {
 	uint32_t *bgn;
 	int bo_next;
 	int bo_nr;
-	NvCmdList cmd_list;
 	struct nouveau_bo *bos[];
 };
 
@@ -217,38 +216,80 @@ pushbuf_submit(struct nouveau_pushbuf *push, struct nouveau_object *chan)
 {
 	CALLED();
 	struct nouveau_pushbuf_priv *nvpb = nouveau_pushbuf(push);
-	NvGpu *gpu = nvpb->cmd_list.parent;
-	NvFence fence;
+	struct nouveau_pushbuf_krec *krec = nvpb->list;
+	struct nouveau_device *dev = push->client->device;
+	struct nouveau_device_priv *nvdev = nouveau_device(dev);
+	struct drm_nouveau_gem_pushbuf_bo_presumed *info;
+	struct drm_nouveau_gem_pushbuf_bo *kref;
+	struct drm_nouveau_gem_pushbuf_push *kpsh;
+	struct nouveau_fifo *fifo = chan->data;
+	struct nouveau_bo *bo;
+	struct nouveau_bo_priv *nvbo;
+	int krec_id = 0;
+	int ret = 0, i;
 	Result rc;
+
+	if (chan->oclass != NOUVEAU_FIFO_CHANNEL_CLASS)
+		return -EINVAL;
 
 	if (push->kick_notify)
 		push->kick_notify(push);
 
-	if (nvpb->ptr == push->cur) {
-		TRACE("Empty pushbuf submitted\n");
-		return 0;
+	nouveau_pushbuf_data(push, NULL, 0, 0);
+
+	while (krec && krec->nr_push) {
+#if DEBUG
+		pushbuf_dump(krec, krec_id++, fifo->channel);
+#endif
+
+		kpsh = krec->push;
+		for (i = 0; i < krec->nr_push; i++, kpsh++) {
+			kref = krec->buffer + kpsh->bo_index;
+			bo = (void *)(unsigned long)kref->user_priv;
+			nvbo = nouveau_bo(bo);
+
+			/* TODO: Do this in a better way when libnx 
+			 * supports sending multiple cmdlists at the same time
+			 */
+			NvCmdList cmdlist;
+			cmdlist.buffer = nvbo->buffer,
+			cmdlist.offset = kpsh->offset / 4,
+			cmdlist.num_cmds = kpsh->length / 4,
+			cmdlist.max_cmds = kpsh->length / 4,
+			cmdlist.parent = &nvdev->gpu;
+
+			NvFence fence;
+			rc = nvGpfifoSubmitCmdList(&nvdev->gpu.gpfifo, &cmdlist, 0, &fence);
+			if (R_FAILED(rc)) {
+				TRACE("nvGpfifo rejected pushbuf: %x\n", rc);
+				pushbuf_dump(krec, krec_id++, fifo->channel);
+				return -rc;
+			}
+
+			// TODO: Store the returned fence in the bo to wait on it later.
+		}
+
+		kref = krec->buffer;
+		for (i = 0; i < krec->nr_buffer; i++, kref++) {
+			bo = (void *)(unsigned long)kref->user_priv;
+
+			info = &kref->presumed;
+			if (!info->valid) {
+				bo->flags &= ~NOUVEAU_BO_APER;
+				bo->flags |= NOUVEAU_BO_GART;
+				bo->offset = info->offset;
+			}
+
+			if (kref->write_domains)
+				nouveau_bo(bo)->access |= NOUVEAU_BO_WR;
+			if (kref->read_domains)
+				nouveau_bo(bo)->access |= NOUVEAU_BO_RD;
+		}
+
+		krec = krec->next;
 	}
 
-	// Calculate the number of commands to submit
-	nvpb->cmd_list.num_cmds = push->cur - nvpb->ptr;
-	TRACE("Submitting push buffer %p with %zu commands\n", nvpb->ptr, nvpb->cmd_list.num_cmds);
-
-	rc = nvGpfifoSubmitCmdList(&gpu->gpfifo, &nvpb->cmd_list, 0, &fence);
-	if (R_FAILED(rc)) {
-		TRACE("nvGpfifo rejected pushbuf: %x\n", rc);
-		static bool first_fail = true;
-		if (first_fail)
-			pushbuf_dump(nvpb->bgn, push->cur);
-		first_fail = false;
-		return -rc;
-	}
-
-	TRACE("Got back fence %d %u\n", (int)fence.id, fence.value);
-	nvFenceWait(&fence, -1);
-	nvpb->ptr = push->cur;
-
-	// TODO: Implicit fencing
-	return 0;
+	return ret;
 }
 
 static int
