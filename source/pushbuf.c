@@ -384,9 +384,44 @@ static int
 pushbuf_validate(struct nouveau_pushbuf *push, bool retry)
 {
 	CALLED();
+	struct nouveau_pushbuf_priv *nvpb = nouveau_pushbuf(push);
+	struct nouveau_pushbuf_krec *krec = nvpb->krec;
+	struct drm_nouveau_gem_pushbuf_bo *kref;
+	struct nouveau_bufctx *bctx = push->bufctx;
+	struct nouveau_bufref *bref;
+	int relocs = bctx ? bctx->relocs * 2: 0;
+	int sref, srel, ret;
 
-	// Unimplemented
-	return 0;
+	ret = nouveau_pushbuf_space(push, relocs, relocs, 0);
+	if (ret || bctx == NULL)
+		return ret;
+
+	sref = krec->nr_buffer;
+	srel = krec->nr_reloc;
+
+	DRMLISTDEL(&bctx->head);
+	DRMLISTADD(&bctx->head, &nvpb->bctx_list);
+
+	DRMLISTFOREACHENTRY(bref, &bctx->pending, thead) {
+		kref = pushbuf_kref(push, bref->bo, bref->flags);
+		if (!kref) {
+			ret = -ENOSPC;
+			break;
+		}
+	}
+
+	DRMLISTJOIN(&bctx->pending, &bctx->current);
+	DRMINITLISTHEAD(&bctx->pending);
+
+	if (ret) {
+		pushbuf_refn_fail(push, sref, srel);
+		if (retry) {
+			pushbuf_flush(push);
+			return pushbuf_validate(push, false);
+		}
+	}
+
+	return ret;
 }
 
 int
@@ -463,8 +498,9 @@ nouveau_pushbuf_bufctx(struct nouveau_pushbuf *push, struct nouveau_bufctx *ctx)
 {
 	CALLED();
 
-	// Unimplemented
-	return NULL;
+	struct nouveau_bufctx *prev = push->bufctx;
+	push->bufctx = ctx;
+	return prev;
 }
 
 int
