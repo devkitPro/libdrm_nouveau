@@ -68,8 +68,8 @@ struct nouveau_pushbuf_priv {
 	uint32_t *bgn;
 	int bo_next;
 	int bo_nr;
-	//struct nouveau_bo *bos[]; TODO: Array of cmd_list
 	NvCmdList cmd_list;
+	struct nouveau_bo *bos[];
 };
 
 static inline struct nouveau_pushbuf_priv *
@@ -265,28 +265,37 @@ nouveau_pushbuf_new(struct nouveau_client *client, struct nouveau_object *chan,
 		    struct nouveau_pushbuf **ppush)
 {
 	CALLED();
-	struct nouveau_device_priv *nvdev = nouveau_device(client->device);
 	struct nouveau_pushbuf_priv *nvpb;
 	struct nouveau_pushbuf *push;
-	Result rc;
+	int ret;
 
-	nvpb = calloc(1, sizeof(*nvpb)); // + nr * sizeof(*nvpb->bos));
+	nvpb = calloc(1, sizeof(*nvpb) + nr * sizeof(*nvpb->bos));
 	if (!nvpb)
 		return -ENOMEM;
 
-	push = &nvpb->base;
-	rc = nvCmdListCreate(&nvpb->cmd_list, &nvdev->gpu, size / 4);
-	if (R_FAILED(rc)) {
-		TRACE("Failed to create pushbuf NvCmdList!\n");
+	nvpb->krec = calloc(1, sizeof(*nvpb->krec));
+	nvpb->list = nvpb->krec;
+	if (!nvpb->krec) {
 		free(nvpb);
-		return -rc;
+		return -ENOMEM;
 	}
 
-	push->channel = chan;
-	nvpb->bgn = nvBufferGetCpuAddr(&nvpb->cmd_list.buffer);
-	nvpb->ptr = nvpb->bgn;
-	push->cur = nvpb->bgn;
-	push->end = push->cur + nvpb->cmd_list.max_cmds;
+	push = &nvpb->base;
+	push->client = client;
+	push->channel = immediate ? chan : NULL;
+	push->flags = NOUVEAU_BO_RD | NOUVEAU_BO_GART | NOUVEAU_BO_MAP;
+	nvpb->type = NOUVEAU_BO_GART;
+
+	for (nvpb->bo_nr = 0; nvpb->bo_nr < nr; nvpb->bo_nr++) {
+		ret = nouveau_bo_new(client->device, nvpb->type, 0, size,
+				     NULL, &nvpb->bos[nvpb->bo_nr]);
+		if (ret) {
+			nouveau_pushbuf_del(&push);
+			return ret;
+		}
+	}
+
+	DRMINITLISTHEAD(&nvpb->bctx_list);
 	*ppush = push;
 
 	return 0;
@@ -297,9 +306,25 @@ nouveau_pushbuf_del(struct nouveau_pushbuf **ppush)
 {
 	CALLED();
 	struct nouveau_pushbuf_priv *nvpb = nouveau_pushbuf(*ppush);
-
-	nvCmdListClose(&nvpb->cmd_list);
-	free(nvpb);
+	if (nvpb) {
+		struct drm_nouveau_gem_pushbuf_bo *kref;
+		struct nouveau_pushbuf_krec *krec;
+		while ((krec = nvpb->list)) {
+			kref = krec->buffer;
+			while (krec->nr_buffer--) {
+				unsigned long priv = kref++->user_priv;
+				struct nouveau_bo *bo = (void *)priv;
+				cli_kref_set(nvpb->base.client, bo, NULL, NULL);
+				nouveau_bo_ref(NULL, &bo);
+			}
+			nvpb->list = krec->next;
+			free(krec);
+		}
+		while (nvpb->bo_nr--)
+			nouveau_bo_ref(NULL, &nvpb->bos[nvpb->bo_nr]);
+		nouveau_bo_ref(NULL, &nvpb->bo);
+		free(nvpb);
+	}
 	*ppush = NULL;
 }
 
@@ -318,17 +343,63 @@ nouveau_pushbuf_space(struct nouveau_pushbuf *push,
 {
 	CALLED();
 	struct nouveau_pushbuf_priv *nvpb = nouveau_pushbuf(push);
+	struct nouveau_pushbuf_krec *krec = nvpb->krec;
+	struct nouveau_client *client = push->client;
+	struct nouveau_bo *bo = NULL;
+	bool flushed = false;
+	int ret = 0;
 
+	/* switch to next buffer if insufficient space in the current one */
 	if (push->cur + dwords >= push->end) {
-		TRACE("Command list is full, need a flush...");
-		pushbuf_flush(push);
-		nvCmdListReset(&nvpb->cmd_list);
-		push->cur = nvpb->bgn;
-		nvpb->ptr = nvpb->bgn;
+		if (nvpb->bo_next < nvpb->bo_nr) {
+			nouveau_bo_ref(nvpb->bos[nvpb->bo_next++], &bo);
+			if (nvpb->bo_next == nvpb->bo_nr && push->channel)
+				nvpb->bo_next = 0;
+		} else {
+			ret = nouveau_bo_new(client->device, nvpb->type, 0,
+					     nvpb->bos[0]->size, NULL, &bo);
+			if (ret)
+				return ret;
+		}
 	}
 
-	// Unimplemented
-	return 0;
+	/* make sure there's always enough space to queue up the pending
+	 * data in the pushbuf proper
+	 */
+	pushes++;
+
+	/* need to flush if we've run out of space on an immediate pushbuf,
+	 * if the new buffer won't fit, or if the kernel push/reloc limits
+	 * have been hit
+	 */
+	if ((bo && ( push->channel ||
+		    !pushbuf_kref(push, bo, push->flags))) ||
+	    krec->nr_reloc + relocs >= NOUVEAU_GEM_MAX_RELOCS ||
+	    krec->nr_push + pushes >= NOUVEAU_GEM_MAX_PUSH) {
+		if (nvpb->bo && krec->nr_buffer)
+			pushbuf_flush(push);
+		flushed = true;
+	}
+
+	/* if necessary, switch to new buffer */
+	if (bo) {
+		ret = nouveau_bo_map(bo, NOUVEAU_BO_WR, push->client);
+		if (ret)
+			return ret;
+
+		nouveau_pushbuf_data(push, NULL, 0, 0);
+		nouveau_bo_ref(bo, &nvpb->bo);
+		nouveau_bo_ref(NULL, &bo);
+
+		nvpb->bgn = nvpb->bo->map;
+		nvpb->ptr = nvpb->bgn;
+		push->cur = nvpb->bgn;
+		push->end = push->cur + (nvpb->bo->size / 4);
+		push->end -= 2 + push->rsvd_kick; /* space for suffix */
+	}
+
+	pushbuf_kref(push, nvpb->bo, push->flags);
+	return flushed ? pushbuf_validate(push, false) : 0;
 }
 
 void
