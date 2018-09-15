@@ -81,7 +81,6 @@ nouveau_pushbuf(struct nouveau_pushbuf *push)
 static int pushbuf_validate(struct nouveau_pushbuf *, bool);
 static int pushbuf_flush(struct nouveau_pushbuf *);
 
-#if 0
 static bool
 pushbuf_kref_fits(struct nouveau_pushbuf *push, struct nouveau_bo *bo,
 		  uint32_t *domains)
@@ -108,17 +107,63 @@ pushbuf_kref(struct nouveau_pushbuf *push, struct nouveau_bo *bo,
 {
 	CALLED();
 
-	// Unimplemented
-	return NULL;
+	struct nouveau_pushbuf_priv *nvpb = nouveau_pushbuf(push);
+	struct nouveau_pushbuf_krec *krec = nvpb->krec;
+	struct nouveau_pushbuf *fpush;
+	struct drm_nouveau_gem_pushbuf_bo *kref;
+	uint32_t domains, domains_wr, domains_rd;
+
+	domains = NOUVEAU_GEM_DOMAIN_GART;
+
+	domains_wr = domains * !!(flags & NOUVEAU_BO_WR);
+	domains_rd = domains * !!(flags & NOUVEAU_BO_RD);
+
+	/* if buffer is referenced on another pushbuf that is owned by the
+	 * same client, we need to flush the other pushbuf first to ensure
+	 * the correct ordering of commands
+	 */
+	fpush = cli_push_get(push->client, bo);
+	if (fpush && fpush != push)
+		pushbuf_flush(fpush);
+
+	kref = cli_kref_get(push->client, bo);
+	if (kref) {
+		/* possible conflict in memory types - flush and retry */
+		if (!(kref->valid_domains & domains)) {
+			return NULL;
+		}
+
+		kref->valid_domains &= domains;
+		kref->write_domains |= domains_wr;
+		kref->read_domains  |= domains_rd;
+	} else {
+		if (krec->nr_buffer == NOUVEAU_GEM_MAX_BUFFERS ||
+		    !pushbuf_kref_fits(push, bo, &domains))
+			return NULL;
+
+		kref = &krec->buffer[krec->nr_buffer++];
+		kref->user_priv = (unsigned long)bo;
+		kref->handle = bo->handle;
+		kref->valid_domains = domains;
+		kref->write_domains = domains_wr;
+		kref->read_domains = domains_rd;
+		kref->presumed.valid = 1;
+		kref->presumed.offset = bo->offset;
+		kref->presumed.domain = NOUVEAU_GEM_DOMAIN_GART;
+		cli_kref_set(push->client, bo, kref, push);
+		atomic_inc(&nouveau_bo(bo)->refcnt);
+	}
+
+	return kref;
 }
 
+#if 0
 static uint32_t
 pushbuf_krel(struct nouveau_pushbuf *push, struct nouveau_bo *bo,
 	     uint32_t data, uint32_t flags, uint32_t vor, uint32_t tor)
 {
 	CALLED();
-
-	// Unimplemented
+	// Unneeded
 	return 0;
 }
 #endif
