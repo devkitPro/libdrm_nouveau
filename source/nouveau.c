@@ -458,9 +458,25 @@ int
 nouveau_bo_wait(struct nouveau_bo *bo, uint32_t access,
 		struct nouveau_client *client)
 {
-	// TODO: Unimplemented
 	CALLED();
-	return 0;
+	struct nouveau_bo_priv *nvbo = nouveau_bo(bo);
+	struct nouveau_pushbuf *push;
+	int ret = 0;
+
+	if (!(access & NOUVEAU_BO_RDWR))
+		return 0;
+
+	push = cli_push_get(client, bo);
+	if (push && push->channel)
+		nouveau_pushbuf_kick(push, push->channel);
+
+	if (!nvbo->head.next && !(nvbo->access & NOUVEAU_BO_WR) &&
+				!(access & NOUVEAU_BO_WR))
+		return 0;
+
+	// TODO: Wait for the pushbuf to finish executing
+	nvbo->access = 0;
+	return ret;
 }
 
 int
