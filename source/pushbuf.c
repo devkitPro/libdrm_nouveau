@@ -113,12 +113,6 @@ pushbuf_kref(struct nouveau_pushbuf *push, struct nouveau_bo *bo,
 
 	kref = cli_kref_get(push->client, bo);
 	if (kref) {
-		/* possible conflict in memory types - flush and retry */
-		if (!(kref->valid_domains & domains)) {
-			return NULL;
-		}
-
-		kref->valid_domains &= domains;
 		kref->write_domains |= domains_wr;
 		kref->read_domains  |= domains_rd;
 	} else {
@@ -129,7 +123,6 @@ pushbuf_kref(struct nouveau_pushbuf *push, struct nouveau_bo *bo,
 		kref = &krec->buffer[krec->nr_buffer++];
 		kref->bo = bo;
 		kref->handle = bo->handle;
-		kref->valid_domains = domains;
 		kref->write_domains = domains_wr;
 		kref->read_domains = domains_rd;
 		kref->presumed.valid = 1;
@@ -167,9 +160,8 @@ pushbuf_dump(struct nouveau_pushbuf_krec *krec, int krec_id, int chid)
 
 	kref = krec->buffer;
 	for (i = 0; i < krec->nr_buffer; i++, kref++) {
-		TRACE("ch%d: buf %08x %08x %08x %08x %08x\n", chid, i,
-		    kref->handle, kref->valid_domains,
-		    kref->read_domains, kref->write_domains);
+		TRACE("ch%d: buf %08x %08x %08x %08x\n", chid, i,
+		    kref->handle, kref->read_domains, kref->write_domains);
 	}
 
 	kpsh = krec->push;

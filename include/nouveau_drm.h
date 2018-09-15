@@ -147,7 +147,6 @@ struct drm_nouveau_gem_pushbuf_bo {
 	__u32 handle;
 	__u32 read_domains;
 	__u32 write_domains;
-	__u32 valid_domains;
 	struct drm_nouveau_gem_pushbuf_bo_presumed presumed;
 };
 
