@@ -143,7 +143,7 @@ struct drm_nouveau_gem_pushbuf_bo_presumed {
 };
 
 struct drm_nouveau_gem_pushbuf_bo {
-	__u64 user_priv;
+	struct nouveau_bo *bo; // The backing bo where this buffer is stored.
 	__u32 handle;
 	__u32 read_domains;
 	__u32 write_domains;

@@ -127,7 +127,7 @@ pushbuf_kref(struct nouveau_pushbuf *push, struct nouveau_bo *bo,
 			return NULL;
 
 		kref = &krec->buffer[krec->nr_buffer++];
-		kref->user_priv = (unsigned long)bo;
+		kref->bo = bo;
 		kref->handle = bo->handle;
 		kref->valid_domains = domains;
 		kref->write_domains = domains_wr;
@@ -175,7 +175,7 @@ pushbuf_dump(struct nouveau_pushbuf_krec *krec, int krec_id, int chid)
 	kpsh = krec->push;
 	for (i = 0; i < krec->nr_push; i++, kpsh++) {
 		kref = krec->buffer + kpsh->bo_index;
-		bo = (void *)(unsigned long)kref->user_priv;
+		bo = kref->bo;
 		bgn = (uint32_t *)((char *)bo->map + kpsh->offset);
 		end = bgn + (kpsh->length /4);
 
@@ -222,7 +222,7 @@ pushbuf_submit(struct nouveau_pushbuf *push, struct nouveau_object *chan)
 		kpsh = krec->push;
 		for (i = 0; i < krec->nr_push; i++, kpsh++) {
 			kref = krec->buffer + kpsh->bo_index;
-			bo = (void *)(unsigned long)kref->user_priv;
+			bo = kref->bo;
 			nvbo = nouveau_bo(bo);
 
 			/* TODO: Do this in a better way when libnx 
@@ -248,7 +248,7 @@ pushbuf_submit(struct nouveau_pushbuf *push, struct nouveau_object *chan)
 
 		kref = krec->buffer;
 		for (i = 0; i < krec->nr_buffer; i++, kref++) {
-			bo = (void *)(unsigned long)kref->user_priv;
+			bo = kref->bo;
 
 			info = &kref->presumed;
 			if (!info->valid) {
@@ -284,7 +284,7 @@ pushbuf_flush(struct nouveau_pushbuf *push)
 	
 	kref = krec->buffer;
 	for (i = 0; i < krec->nr_buffer; i++, kref++) {
-		bo = (void *)(unsigned long)kref->user_priv;
+		bo = kref->bo;
 		cli_kref_set(push->client, bo, NULL, NULL);
 		if (push->channel)
 			nouveau_bo_ref(NULL, &bo);
@@ -313,7 +313,7 @@ pushbuf_refn_fail(struct nouveau_pushbuf *push, int sref)
 
 	kref = krec->buffer + sref;
 	while (krec->nr_buffer-- > sref) {
-		struct nouveau_bo *bo = (void *)(unsigned long)kref->user_priv;
+		struct nouveau_bo *bo = kref->bo;
 		cli_kref_set(push->client, bo, NULL, NULL);
 		nouveau_bo_ref(NULL, &bo);
 		kref++;
@@ -449,8 +449,7 @@ nouveau_pushbuf_del(struct nouveau_pushbuf **ppush)
 		while ((krec = nvpb->list)) {
 			kref = krec->buffer;
 			while (krec->nr_buffer--) {
-				unsigned long priv = kref++->user_priv;
-				struct nouveau_bo *bo = (void *)priv;
+				struct nouveau_bo *bo = kref++->bo;
 				cli_kref_set(nvpb->base.client, bo, NULL, NULL);
 				nouveau_bo_ref(NULL, &bo);
 			}
