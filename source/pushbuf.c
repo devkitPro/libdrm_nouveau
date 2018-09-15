@@ -169,15 +169,47 @@ pushbuf_krel(struct nouveau_pushbuf *push, struct nouveau_bo *bo,
 #endif
 
 static void
-pushbuf_dump(uint32_t *start, uint32_t *end)
+pushbuf_dump(struct nouveau_pushbuf_krec *krec, int krec_id, int chid)
 {
-#ifdef DEBUG
-	for (uint32_t cmd = 0; start < end; start++)
-	{
-		cmd = *start;
-		TRACE("0x%08x\n", cmd);
+	struct drm_nouveau_gem_pushbuf_reloc *krel;
+	struct drm_nouveau_gem_pushbuf_push *kpsh;
+	struct drm_nouveau_gem_pushbuf_bo *kref;
+	struct nouveau_bo *bo;
+	uint32_t *bgn, *end;
+	int i;
+
+	TRACE("ch%d: krec %d pushes %d bufs %d relocs %d\n", chid,
+	    krec_id, krec->nr_push, krec->nr_buffer, krec->nr_reloc);
+
+	kref = krec->buffer;
+	for (i = 0; i < krec->nr_buffer; i++, kref++) {
+		TRACE("ch%d: buf %08x %08x %08x %08x %08x\n", chid, i,
+		    kref->handle, kref->valid_domains,
+		    kref->read_domains, kref->write_domains);
 	}
-#endif
+
+	krel = krec->reloc;
+	for (i = 0; i < krec->nr_reloc; i++, krel++) {
+		TRACE("ch%d: rel %08x %08x %08x %08x %08x %08x %08x\n",
+		    chid, krel->reloc_bo_index, krel->reloc_bo_offset,
+		    krel->bo_index, krel->flags, krel->data,
+		    krel->vor, krel->tor);
+	}
+
+	kpsh = krec->push;
+	for (i = 0; i < krec->nr_push; i++, kpsh++) {
+		kref = krec->buffer + kpsh->bo_index;
+		bo = (void *)(unsigned long)kref->user_priv;
+		bgn = (uint32_t *)((char *)bo->map + kpsh->offset);
+		end = bgn + (kpsh->length /4);
+
+		TRACE("ch%d: psh %08x %010llx %010llx\n", chid, kpsh->bo_index,
+		    (unsigned long long)kpsh->offset,
+		    (unsigned long long)(kpsh->offset + kpsh->length));
+		while (bgn < end)
+			TRACE("\t0x%08x\n", *bgn++);
+	}
+
 }
 
 static int
