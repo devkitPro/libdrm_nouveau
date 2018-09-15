@@ -69,6 +69,7 @@ struct nouveau_bo_priv {
 	struct nouveau_list head;
 	atomic_t refcnt;
 	uint64_t map_handle;
+	void* map_addr;
 	uint32_t name;
 	uint32_t access;
 	NvBuffer buffer;
