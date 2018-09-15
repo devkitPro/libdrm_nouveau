@@ -151,20 +151,6 @@ struct drm_nouveau_gem_pushbuf_bo {
 	struct drm_nouveau_gem_pushbuf_bo_presumed presumed;
 };
 
-#define NOUVEAU_GEM_RELOC_LOW  (1 << 0)
-#define NOUVEAU_GEM_RELOC_HIGH (1 << 1)
-#define NOUVEAU_GEM_RELOC_OR   (1 << 2)
-#define NOUVEAU_GEM_MAX_RELOCS 1024
-struct drm_nouveau_gem_pushbuf_reloc {
-	__u32 reloc_bo_index;
-	__u32 reloc_bo_offset;
-	__u32 bo_index;
-	__u32 flags;
-	__u32 data;
-	__u32 vor;
-	__u32 tor;
-};
-
 #define NOUVEAU_GEM_MAX_PUSH 512
 struct drm_nouveau_gem_pushbuf_push {
 	__u32 bo_index;

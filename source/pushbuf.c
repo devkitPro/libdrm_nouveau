@@ -48,10 +48,8 @@
 struct nouveau_pushbuf_krec {
 	struct nouveau_pushbuf_krec *next;
 	struct drm_nouveau_gem_pushbuf_bo buffer[NOUVEAU_GEM_MAX_BUFFERS];
-	struct drm_nouveau_gem_pushbuf_reloc reloc[NOUVEAU_GEM_MAX_RELOCS];
 	struct drm_nouveau_gem_pushbuf_push push[NOUVEAU_GEM_MAX_PUSH];
 	int nr_buffer;
-	int nr_reloc;
 	int nr_push;
 };
 
@@ -158,29 +156,20 @@ pushbuf_krel(struct nouveau_pushbuf *push, struct nouveau_bo *bo,
 static void
 pushbuf_dump(struct nouveau_pushbuf_krec *krec, int krec_id, int chid)
 {
-	struct drm_nouveau_gem_pushbuf_reloc *krel;
 	struct drm_nouveau_gem_pushbuf_push *kpsh;
 	struct drm_nouveau_gem_pushbuf_bo *kref;
 	struct nouveau_bo *bo;
 	uint32_t *bgn, *end;
 	int i;
 
-	TRACE("ch%d: krec %d pushes %d bufs %d relocs %d\n", chid,
-	    krec_id, krec->nr_push, krec->nr_buffer, krec->nr_reloc);
+	TRACE("ch%d: krec %d pushes %d bufs %d\n", chid,
+	    krec_id, krec->nr_push, krec->nr_buffer);
 
 	kref = krec->buffer;
 	for (i = 0; i < krec->nr_buffer; i++, kref++) {
 		TRACE("ch%d: buf %08x %08x %08x %08x %08x\n", chid, i,
 		    kref->handle, kref->valid_domains,
 		    kref->read_domains, kref->write_domains);
-	}
-
-	krel = krec->reloc;
-	for (i = 0; i < krec->nr_reloc; i++, krel++) {
-		TRACE("ch%d: rel %08x %08x %08x %08x %08x %08x %08x\n",
-		    chid, krel->reloc_bo_index, krel->reloc_bo_offset,
-		    krel->bo_index, krel->flags, krel->data,
-		    krel->vor, krel->tor);
 	}
 
 	kpsh = krec->push;
@@ -303,7 +292,6 @@ pushbuf_flush(struct nouveau_pushbuf *push)
 
 	krec = nvpb->krec;
 	krec->nr_buffer = 0;
-	krec->nr_reloc = 0;
 	krec->nr_push = 0;
 
 	DRMLISTFOREACHENTRYSAFE(bctx, btmp, &nvpb->bctx_list, head) {
@@ -316,7 +304,7 @@ pushbuf_flush(struct nouveau_pushbuf *push)
 }
 
 static void
-pushbuf_refn_fail(struct nouveau_pushbuf *push, int sref, int srel)
+pushbuf_refn_fail(struct nouveau_pushbuf *push, int sref)
 {
 	CALLED();
 	struct nouveau_pushbuf_priv *nvpb = nouveau_pushbuf(push);
@@ -331,7 +319,6 @@ pushbuf_refn_fail(struct nouveau_pushbuf *push, int sref, int srel)
 		kref++;
 	}
 	krec->nr_buffer = sref;
-	krec->nr_reloc = srel;
 }
 
 static int
@@ -355,7 +342,7 @@ pushbuf_refn(struct nouveau_pushbuf *push, bool retry,
 	}
 
 	if (ret) {
-		pushbuf_refn_fail(push, sref, krec->nr_reloc);
+		pushbuf_refn_fail(push, sref);
 		if (retry) {
 			pushbuf_flush(push);
 			nouveau_pushbuf_space(push, 0, 0, 0);
@@ -376,14 +363,13 @@ pushbuf_validate(struct nouveau_pushbuf *push, bool retry)
 	struct nouveau_bufctx *bctx = push->bufctx;
 	struct nouveau_bufref *bref;
 	int relocs = bctx ? bctx->relocs * 2: 0;
-	int sref, srel, ret;
+	int sref, ret;
 
 	ret = nouveau_pushbuf_space(push, relocs, relocs, 0);
 	if (ret || bctx == NULL)
 		return ret;
 
 	sref = krec->nr_buffer;
-	srel = krec->nr_reloc;
 
 	DRMLISTDEL(&bctx->head);
 	DRMLISTADD(&bctx->head, &nvpb->bctx_list);
@@ -400,7 +386,7 @@ pushbuf_validate(struct nouveau_pushbuf *push, bool retry)
 	DRMINITLISTHEAD(&bctx->pending);
 
 	if (ret) {
-		pushbuf_refn_fail(push, sref, srel);
+		pushbuf_refn_fail(push, sref);
 		if (retry) {
 			pushbuf_flush(push);
 			return pushbuf_validate(push, false);
@@ -521,12 +507,11 @@ nouveau_pushbuf_space(struct nouveau_pushbuf *push,
 	pushes++;
 
 	/* need to flush if we've run out of space on an immediate pushbuf,
-	 * if the new buffer won't fit, or if the kernel push/reloc limits
+	 * if the new buffer won't fit, or if the kernel push limits
 	 * have been hit
 	 */
 	if ((bo && ( push->channel ||
 		    !pushbuf_kref(push, bo, push->flags))) ||
-	    krec->nr_reloc + relocs >= NOUVEAU_GEM_MAX_RELOCS ||
 	    krec->nr_push + pushes >= NOUVEAU_GEM_MAX_PUSH) {
 		if (nvpb->bo && krec->nr_buffer)
 			pushbuf_flush(push);
