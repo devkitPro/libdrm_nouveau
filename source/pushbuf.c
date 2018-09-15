@@ -88,7 +88,17 @@ pushbuf_kref_fits(struct nouveau_pushbuf *push, struct nouveau_bo *bo,
 {
 	CALLED();
 
-	// Unimplemented
+	struct nouveau_pushbuf_priv *nvpb = nouveau_pushbuf(push);
+	struct nouveau_pushbuf_krec *krec = nvpb->krec;
+	struct nouveau_device *dev = push->client->device;
+
+	// Check if the buffer fits in the available GART.
+	if (krec->gart_used + bo->size > dev->gart_limit) {
+		TRACE("buffer with size %u does not fit in memory. used=%u limit %u\n", 
+			bo->size, krec->gart_used, dev->gart_limit);
+		return false;
+	}
+	krec->gart_used += bo->size;
 	return true;
 }
 
