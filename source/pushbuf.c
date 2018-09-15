@@ -329,15 +329,24 @@ pushbuf_flush(struct nouveau_pushbuf *push)
 	return ret;
 }
 
-#if 0
 static void
 pushbuf_refn_fail(struct nouveau_pushbuf *push, int sref, int srel)
 {
 	CALLED();
+	struct nouveau_pushbuf_priv *nvpb = nouveau_pushbuf(push);
+	struct nouveau_pushbuf_krec *krec = nvpb->krec;
+	struct drm_nouveau_gem_pushbuf_bo *kref;
 
-	// Unimplemented
+	kref = krec->buffer + sref;
+	while (krec->nr_buffer-- > sref) {
+		struct nouveau_bo *bo = (void *)(unsigned long)kref->user_priv;
+		cli_kref_set(push->client, bo, NULL, NULL);
+		nouveau_bo_ref(NULL, &bo);
+		kref++;
+	}
+	krec->nr_buffer = sref;
+	krec->nr_reloc = srel;
 }
-#endif
 
 static int
 pushbuf_refn(struct nouveau_pushbuf *push, bool retry,
@@ -345,8 +354,30 @@ pushbuf_refn(struct nouveau_pushbuf *push, bool retry,
 {
 	CALLED();
 
-	// Unimplemented
-	return 0;
+	struct nouveau_pushbuf_priv *nvpb = nouveau_pushbuf(push);
+	struct nouveau_pushbuf_krec *krec = nvpb->krec;
+	struct drm_nouveau_gem_pushbuf_bo *kref;
+	int sref = krec->nr_buffer;
+	int ret = 0, i;
+
+	for (i = 0; i < nr; i++) {
+		kref = pushbuf_kref(push, refs[i].bo, refs[i].flags);
+		if (!kref) {
+			ret = -ENOSPC;
+			break;
+		}
+	}
+
+	if (ret) {
+		pushbuf_refn_fail(push, sref, krec->nr_reloc);
+		if (retry) {
+			pushbuf_flush(push);
+			nouveau_pushbuf_space(push, 0, 0, 0);
+			return pushbuf_refn(push, false, refs, nr);
+		}
+	}
+
+	return ret;
 }
 
 static int
