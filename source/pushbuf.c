@@ -53,8 +53,6 @@ struct nouveau_pushbuf_krec {
 	int nr_buffer;
 	int nr_reloc;
 	int nr_push;
-	uint64_t vram_used;
-	uint64_t gart_used;
 };
 
 struct nouveau_pushbuf_priv {
@@ -86,17 +84,7 @@ pushbuf_kref_fits(struct nouveau_pushbuf *push, struct nouveau_bo *bo,
 {
 	CALLED();
 
-	struct nouveau_pushbuf_priv *nvpb = nouveau_pushbuf(push);
-	struct nouveau_pushbuf_krec *krec = nvpb->krec;
-	struct nouveau_device *dev = push->client->device;
-
-	// Check if the buffer fits in the available GART.
-	if (krec->gart_used + bo->size > dev->gart_limit) {
-		TRACE("buffer with size %u does not fit in memory. used=%u limit %u\n", 
-			bo->size, krec->gart_used, dev->gart_limit);
-		return false;
-	}
-	krec->gart_used += bo->size;
+	// Note: We assume we always have enough memory for the bo.
 	return true;
 }
 
@@ -314,8 +302,6 @@ pushbuf_flush(struct nouveau_pushbuf *push)
 	}
 
 	krec = nvpb->krec;
-	krec->vram_used = 0;
-	krec->gart_used = 0;
 	krec->nr_buffer = 0;
 	krec->nr_reloc = 0;
 	krec->nr_push = 0;

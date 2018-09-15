@@ -165,7 +165,6 @@ nouveau_device_new(struct nouveau_object *parent, int32_t oclass,
 {
 	struct nouveau_drm *drm = nouveau_drm(parent);
 	struct nouveau_device_priv *nvdev;
-	char *tmp;
 	Result rc;
 	CALLED();
 
@@ -184,21 +183,6 @@ nouveau_device_new(struct nouveau_object *parent, int32_t oclass,
 		TRACE("Failed to create GPU.");
 		return -rc;
 	}
-
-	if (!R_SUCCEEDED(svcGetInfo(&nvdev->base.gart_size, 6, CUR_PROCESS_HANDLE, 0)))
-	{
-		TRACE("Failed to get physical memory size.");
-		return -errno;
-	}
-
-	tmp = getenv("NOUVEAU_LIBDRM_VRAM_LIMIT_PERCENT");
-	if (tmp)
-		nvdev->vram_limit_percent = atoi(tmp);
-	else
-		nvdev->vram_limit_percent = 80;
-
-	nvdev->base.gart_limit =
-		(nvdev->base.gart_size * nvdev->vram_limit_percent) / 100;
 
 	mutexInit(&nvdev->lock);
 	DRMINITLISTHEAD(&nvdev->bo_list);
