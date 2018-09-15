@@ -440,7 +440,26 @@ nouveau_pushbuf_data(struct nouveau_pushbuf *push, struct nouveau_bo *bo,
 {
 	CALLED();
 
-	// Unimplemented
+	struct nouveau_pushbuf_priv *nvpb = nouveau_pushbuf(push);
+	struct nouveau_pushbuf_krec *krec = nvpb->krec;
+	struct drm_nouveau_gem_pushbuf_push *kpsh;
+	struct drm_nouveau_gem_pushbuf_bo *kref;
+
+	if (bo != nvpb->bo && nvpb->bgn != push->cur) {
+		nouveau_pushbuf_data(push, nvpb->bo,
+				     (nvpb->bgn - nvpb->ptr) * 4,
+				     (push->cur - nvpb->bgn) * 4);
+		nvpb->bgn = push->cur;
+	}
+
+	if (bo) {
+		kref = cli_kref_get(push->client, bo);
+		assert(kref);
+		kpsh = &krec->push[krec->nr_push++];
+		kpsh->bo_index = kref - krec->buffer;
+		kpsh->offset   = offset;
+		kpsh->length   = length;
+	}
 }
 
 int
@@ -471,9 +490,19 @@ uint32_t
 nouveau_pushbuf_refd(struct nouveau_pushbuf *push, struct nouveau_bo *bo)
 {
 	CALLED();
+	struct drm_nouveau_gem_pushbuf_bo *kref;
+	uint32_t flags = 0;
 
-	// Unimplemented
-	return 0;
+	if (cli_push_get(push->client, bo) == push) {
+		kref = cli_kref_get(push->client, bo);
+		assert(kref);
+		if (kref->read_domains)
+			flags |= NOUVEAU_BO_RD;
+		if (kref->write_domains)
+			flags |= NOUVEAU_BO_WR;
+	}
+
+	return flags;
 }
 
 int
