@@ -185,7 +185,7 @@ nouveau_device_new(struct nouveau_object *parent, int32_t oclass,
 		return -rc;
 	}
 
-	if (!R_SUCCEEDED(svcGetInfo(&nvdev->base.vram_size, 6, CUR_PROCESS_HANDLE, 0)))
+	if (!R_SUCCEEDED(svcGetInfo(&nvdev->base.gart_size, 6, CUR_PROCESS_HANDLE, 0)))
 	{
 		TRACE("Failed to get physical memory size.");
 		return -errno;
@@ -197,8 +197,8 @@ nouveau_device_new(struct nouveau_object *parent, int32_t oclass,
 	else
 		nvdev->vram_limit_percent = 80;
 
-	nvdev->base.vram_limit =
-		(nvdev->base.vram_size * nvdev->vram_limit_percent) / 100;
+	nvdev->base.gart_limit =
+		(nvdev->base.gart_size * nvdev->vram_limit_percent) / 100;
 
 	mutexInit(&nvdev->lock);
 	DRMINITLISTHEAD(&nvdev->bo_list);
