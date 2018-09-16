@@ -336,7 +336,6 @@ nouveau_bo_new(struct nouveau_device *dev, uint32_t flags, uint32_t align,
 	bo->flags = flags;
 	bo->offset = kind != NvKind_Pitch ? nvBufferGetGpuAddrTexture(&nvbo->buffer) : nvBufferGetGpuAddr(&nvbo->buffer);
 	bo->map = NULL;
-	nvbo->map_handle = nvBufferGetGpuAddr(&nvbo->buffer);
 	nvbo->map_addr = nvBufferGetCpuAddr(&nvbo->buffer);
 	memset(nvbo->map_addr, 0, bo->size);
 
@@ -469,7 +468,7 @@ nouveau_bo_map(struct nouveau_bo *bo, uint32_t access,
 {
 	CALLED();
 	struct nouveau_bo_priv *nvbo = nouveau_bo(bo);
-	bo->map = (void*)nvbo->map_addr;
+	bo->map = nvbo->map_addr;
 	return nouveau_bo_wait(bo, access, client);
 }
 
