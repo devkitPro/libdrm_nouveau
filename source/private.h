@@ -8,15 +8,22 @@
 
 #include <switch.h>
 
-struct nouveau_client_kref {
+#define BO_MAP_NUM_BUCKETS 31
+
+struct nouveau_client_bo_map_entry {
+	struct nouveau_client_bo_map_entry *next;
 	struct drm_nouveau_gem_pushbuf_bo *kref;
 	struct nouveau_pushbuf *push;
+	uint32_t bo_handle;
+};
+
+struct nouveau_client_bo_map {
+	struct nouveau_client_bo_map_entry *buckets[BO_MAP_NUM_BUCKETS];
 };
 
 struct nouveau_client_priv {
 	struct nouveau_client base;
-	struct nouveau_client_kref *kref;
-	unsigned kref_nr;
+	struct nouveau_client_bo_map bomap;
 };
 
 static inline struct nouveau_client_priv *
@@ -25,44 +32,19 @@ nouveau_client(struct nouveau_client *client)
 	return (struct nouveau_client_priv *)client;
 }
 
-static inline struct drm_nouveau_gem_pushbuf_bo *
-cli_kref_get(struct nouveau_client *client, struct nouveau_bo *bo)
-{
-	struct nouveau_client_priv *pcli = nouveau_client(client);
-	struct drm_nouveau_gem_pushbuf_bo *kref = NULL;
-	if (pcli->kref_nr > bo->handle)
-		kref = pcli->kref[bo->handle].kref;
-	return kref;
-}
+void
+cli_map_free(struct nouveau_client *);
 
-static inline struct nouveau_pushbuf *
-cli_push_get(struct nouveau_client *client, struct nouveau_bo *bo)
-{
-	struct nouveau_client_priv *pcli = nouveau_client(client);
-	struct nouveau_pushbuf *push = NULL;
-	if (pcli->kref_nr > bo->handle)
-		push = pcli->kref[bo->handle].push;
-	return push;
-}
+struct drm_nouveau_gem_pushbuf_bo *
+cli_kref_get(struct nouveau_client *, struct nouveau_bo *bo);
 
-static inline void
-cli_kref_set(struct nouveau_client *client, struct nouveau_bo *bo,
-	     struct drm_nouveau_gem_pushbuf_bo *kref,
-	     struct nouveau_pushbuf *push)
-{
-	struct nouveau_client_priv *pcli = nouveau_client(client);
-	if (pcli->kref_nr <= bo->handle) {
-		pcli->kref = realloc(pcli->kref,
-				     sizeof(*pcli->kref) * bo->handle * 2);
-		while (pcli->kref_nr < bo->handle * 2) {
-			pcli->kref[pcli->kref_nr].kref = NULL;
-			pcli->kref[pcli->kref_nr].push = NULL;
-			pcli->kref_nr++;
-		}
-	}
-	pcli->kref[bo->handle].kref = kref;
-	pcli->kref[bo->handle].push = push;
-}
+struct nouveau_pushbuf *
+cli_push_get(struct nouveau_client *, struct nouveau_bo *bo);
+
+void
+cli_kref_set(struct nouveau_client *, struct nouveau_bo *bo,
+             struct drm_nouveau_gem_pushbuf_bo *kref,
+             struct nouveau_pushbuf *push);
 
 struct nouveau_bo_priv {
 	struct nouveau_bo base;

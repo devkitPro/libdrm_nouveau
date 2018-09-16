@@ -271,7 +271,7 @@ nouveau_client_del(struct nouveau_client **pclient)
 		mutexLock(&nvdev->lock);
 		nvdev->client[id / 32] &= ~(1 << (id % 32));
 		mutexUnlock(&nvdev->lock);
-		free(pcli->kref);
+		cli_map_free(&pcli->base);
 		free(pcli);
 	}
 }
