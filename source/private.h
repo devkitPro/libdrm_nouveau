@@ -72,6 +72,7 @@ struct nouveau_bo_priv {
 	uint32_t name;
 	uint32_t access;
 	NvBuffer buffer;
+	NvFence fence;
 };
 
 static inline struct nouveau_bo_priv *

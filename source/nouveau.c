@@ -337,6 +337,7 @@ nouveau_bo_new(struct nouveau_device *dev, uint32_t flags, uint32_t align,
 	bo->offset = kind != NvKind_Pitch ? nvBufferGetGpuAddrTexture(&nvbo->buffer) : nvBufferGetGpuAddr(&nvbo->buffer);
 	bo->map = NULL;
 	nvbo->map_addr = nvBufferGetCpuAddr(&nvbo->buffer);
+	nvbo->fence.id = UINT32_MAX;
 	memset(nvbo->map_addr, 0, bo->size);
 
 	if (config)
@@ -390,6 +391,7 @@ nouveau_bo_name_ref(struct nouveau_device *dev, uint32_t name,
 	atomic_set(&nvbo->refcnt, 1);
 	bo->device = dev;
 	bo->handle = name;
+	nvbo->fence.id = UINT32_MAX;
 	*pbo = bo;
 
 	bo->config.nvc0.memtype = NvKind_Generic_16BX2;
@@ -457,8 +459,22 @@ nouveau_bo_wait(struct nouveau_bo *bo, uint32_t access,
 				!(access & NOUVEAU_BO_WR))
 		return 0;
 
-	// TODO: Wait for the pushbuf to finish executing
-	nvbo->access = 0;
+	if ((s32)nvbo->fence.id >= 0) {
+		TRACE("waiting on fence {%d,%u}\n", (int)nvbo->fence.id, nvbo->fence.value);
+		Result res = nvFenceWait(&nvbo->fence, (access & NOUVEAU_BO_NOBLOCK) ? 0 : -1);
+		if (R_FAILED(res))
+			ret = -EAGAIN;
+		else {
+			// Reset the fence since we're done with it.
+			nvbo->fence.id = -1;
+			nvbo->fence.value = 0;
+
+			// TODO: Check for NOUVEAU_BO_WR - maybe we're supposed to flush cache?
+		}
+	}
+
+	if (ret == 0)
+		nvbo->access = 0;
 	return ret;
 }
 

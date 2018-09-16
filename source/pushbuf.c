@@ -59,6 +59,8 @@ struct nouveau_pushbuf_priv {
 	struct nouveau_pushbuf_krec *krec;
 	struct nouveau_list bctx_list;
 	struct nouveau_bo *bo;
+	NvBuffer fence_buf;
+	u32 fence_num_cmds;
 	uint32_t type;
 	uint32_t *ptr;
 	uint32_t *bgn;
@@ -208,39 +210,42 @@ pushbuf_submit(struct nouveau_pushbuf *push, struct nouveau_object *chan)
 
 	while (krec && krec->nr_push) {
 #if DEBUG
-		pushbuf_dump(krec, krec_id++, fifo->channel);
+		//pushbuf_dump(krec, krec_id++, fifo->channel);
 #endif
 
 		kpsh = krec->push;
 		for (i = 0; i < krec->nr_push; i++, kpsh++) {
 			kref = krec->buffer + kpsh->bo_index;
 			bo = kref->bo;
-			nvbo = nouveau_bo(bo);
 
-			/* TODO: Do this in a better way when libnx 
-			 * supports sending multiple cmdlists at the same time
-			 */
-			NvCmdList cmdlist;
-			cmdlist.buffer = nvbo->buffer,
-			cmdlist.offset = kpsh->offset / 4,
-			cmdlist.num_cmds = kpsh->length / 4,
-			cmdlist.max_cmds = kpsh->length / 4,
-			cmdlist.parent = &nvdev->gpu;
-
-			NvFence fence;
-			rc = nvGpfifoSubmitCmdList(&nvdev->gpu.gpfifo, &cmdlist, 0, &fence);
-			if (R_FAILED(rc)) {
-				TRACE("nvGpfifo rejected pushbuf: %x\n", rc);
-				pushbuf_dump(krec, krec_id++, fifo->channel);
-				return -rc;
-			}
-
-			// TODO: Store the returned fence in the bo to wait on it later.
+			// Append the entry to the gpfifo.
+			nvGpfifoAppendEntry(&nvdev->gpu.gpfifo,
+				bo->offset + kpsh->offset,
+				kpsh->length / 4,
+				GPFIFO_ENTRY_NOT_MAIN);
 		}
 
+		// Append the command list used to increase the fence syncpoint to the gpfifo.
+		nvGpfifoAppendEntry(&nvdev->gpu.gpfifo,
+			nvBufferGetGpuAddr(&nvpb->fence_buf), nvpb->fence_num_cmds,
+			GPFIFO_ENTRY_NOT_MAIN | GPFIFO_ENTRY_NO_PREFETCH);
+
+		// Flush the gpfifo.
+		NvFence fence;
+		TRACE("Submitting %u entries to gpfifo\n", nvdev->gpu.gpfifo.num_entries);
+		rc = nvGpfifoFlush(&nvdev->gpu.gpfifo, 1, &fence);
+		if (R_FAILED(rc)) {
+			TRACE("nvGpfifo rejected pushbuf: %x\n", rc);
+			pushbuf_dump(krec, krec_id++, fifo->channel);
+			return -rc;
+		}
+
+		// Store the fence in all referenced bos.
+		TRACE("Received fence {%d,%u}\n", (int)fence.id, fence.value);
 		kref = krec->buffer;
 		for (i = 0; i < krec->nr_buffer; i++, kref++) {
 			bo = kref->bo;
+			nvbo = nouveau_bo(bo);
 
 			info = &kref->presumed;
 			if (!info->valid) {
@@ -249,10 +254,11 @@ pushbuf_submit(struct nouveau_pushbuf *push, struct nouveau_object *chan)
 				bo->offset = info->offset;
 			}
 
+			nvbo->fence = fence;
 			if (kref->write_domains)
-				nouveau_bo(bo)->access |= NOUVEAU_BO_WR;
+				nvbo->access |= NOUVEAU_BO_WR;
 			if (kref->read_domains)
-				nouveau_bo(bo)->access |= NOUVEAU_BO_RD;
+				nvbo->access |= NOUVEAU_BO_RD;
 		}
 
 		krec = krec->next;
@@ -388,12 +394,25 @@ pushbuf_validate(struct nouveau_pushbuf *push, bool retry)
 	return ret;
 }
 
+static u32
+generate_fence_cmdlist(u32* fence_buf, u32 syncpt_id)
+{
+	u32* cmd = fence_buf;
+	*cmd++ = 0x451 | (0 << 13) | (0 << 16) | (4 << 29);
+	*cmd++ = 0x0B2 | (0 << 13) | (1 << 16) | (1 << 29);
+	*cmd++ = syncpt_id | (1 << 20);
+	*cmd++ = 0x451 | (0 << 13) | (0 << 16) | (4 << 29);
+	*cmd++ = 0x3E0 | (0 << 13) | (0 << 16) | (4 << 29);
+	return cmd - fence_buf;
+}
+
 int
 nouveau_pushbuf_new(struct nouveau_client *client, struct nouveau_object *chan,
 		    int nr, uint32_t size, bool immediate,
 		    struct nouveau_pushbuf **ppush)
 {
 	CALLED();
+	struct nouveau_device_priv *nvdev = nouveau_device(client->device);
 	struct nouveau_pushbuf_priv *nvpb;
 	struct nouveau_pushbuf *push;
 	int ret;
@@ -424,6 +443,18 @@ nouveau_pushbuf_new(struct nouveau_client *client, struct nouveau_object *chan,
 		}
 	}
 
+	Result res = nvBufferCreate(&nvpb->fence_buf,
+		0x1000, 0x1000, false, NvKind_Pitch,
+		&nvdev->gpu.addr_space);
+	if (R_FAILED(res)) {
+		nouveau_pushbuf_del(&push);
+		return -ENOMEM;
+	}
+
+	nvpb->fence_num_cmds = generate_fence_cmdlist(
+		nvBufferGetCpuAddr(&nvpb->fence_buf),
+		nvdev->gpu.gpfifo.syncpt_id);
+
 	DRMINITLISTHEAD(&nvpb->bctx_list);
 	*ppush = push;
 
@@ -438,6 +469,7 @@ nouveau_pushbuf_del(struct nouveau_pushbuf **ppush)
 	if (nvpb) {
 		struct drm_nouveau_gem_pushbuf_bo *kref;
 		struct nouveau_pushbuf_krec *krec;
+		nvBufferFree(&nvpb->fence_buf);
 		while ((krec = nvpb->list)) {
 			kref = krec->buffer;
 			while (krec->nr_buffer--) {
