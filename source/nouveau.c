@@ -440,6 +440,18 @@ nouveau_bo_set_prime(struct nouveau_bo *bo, int *prime_fd)
 }
 
 int
+nouveau_bo_get_syncpoint(struct nouveau_bo *bo, unsigned int *out_threshold)
+{
+	CALLED();
+	struct nouveau_bo_priv *nvbo = nouveau_bo(bo);
+
+	if (out_threshold)
+		*out_threshold = nvbo->fence.value;
+
+	return nvbo->fence.id;
+}
+
+int
 nouveau_bo_wait(struct nouveau_bo *bo, uint32_t access,
 		struct nouveau_client *client)
 {
