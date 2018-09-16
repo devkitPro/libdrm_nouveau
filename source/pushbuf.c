@@ -127,9 +127,6 @@ pushbuf_kref(struct nouveau_pushbuf *push, struct nouveau_bo *bo,
 		kref->handle = bo->handle;
 		kref->write_domains = domains_wr;
 		kref->read_domains = domains_rd;
-		kref->presumed.valid = 1;
-		kref->presumed.offset = bo->offset;
-		kref->presumed.domain = NOUVEAU_GEM_DOMAIN_GART;
 		cli_kref_set(push->client, bo, kref, push);
 		atomic_inc(&nouveau_bo(bo)->refcnt);
 	}
@@ -190,7 +187,6 @@ pushbuf_submit(struct nouveau_pushbuf *push, struct nouveau_object *chan)
 	struct nouveau_pushbuf_krec *krec = nvpb->list;
 	struct nouveau_device *dev = push->client->device;
 	struct nouveau_device_priv *nvdev = nouveau_device(dev);
-	struct drm_nouveau_gem_pushbuf_bo_presumed *info;
 	struct drm_nouveau_gem_pushbuf_bo *kref;
 	struct drm_nouveau_gem_pushbuf_push *kpsh;
 	struct nouveau_fifo *fifo = chan->data;
@@ -246,13 +242,6 @@ pushbuf_submit(struct nouveau_pushbuf *push, struct nouveau_object *chan)
 		for (i = 0; i < krec->nr_buffer; i++, kref++) {
 			bo = kref->bo;
 			nvbo = nouveau_bo(bo);
-
-			info = &kref->presumed;
-			if (!info->valid) {
-				bo->flags &= ~NOUVEAU_BO_APER;
-				bo->flags |= NOUVEAU_BO_GART;
-				bo->offset = info->offset;
-			}
 
 			nvbo->fence = fence;
 			if (kref->write_domains)
