@@ -12,13 +12,14 @@
 
 struct nouveau_client_bo_map_entry {
 	struct nouveau_client_bo_map_entry *next;
+	struct nouveau_client_bo_map_entry **prev_next;
 	struct drm_nouveau_gem_pushbuf_bo *kref;
 	struct nouveau_pushbuf *push;
 	uint32_t bo_handle;
 };
 
 struct nouveau_client_bo_map {
-	struct nouveau_client_bo_map_entry *buckets[BO_MAP_NUM_BUCKETS];
+	struct nouveau_client_bo_map_entry *buckets[BO_MAP_NUM_BUCKETS+1];
 };
 
 struct nouveau_client_priv {
