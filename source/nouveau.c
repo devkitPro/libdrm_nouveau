@@ -185,7 +185,6 @@ nouveau_device_new(struct nouveau_object *parent, int32_t oclass,
 	}
 
 	mutexInit(&nvdev->lock);
-	DRMINITLISTHEAD(&nvdev->bo_list);
 	return 0;
 }
 
@@ -493,8 +492,7 @@ nouveau_bo_wait(struct nouveau_bo *bo, uint32_t access,
 	if (push && push->channel)
 		nouveau_pushbuf_kick(push, push->channel);
 
-	if (!nvbo->head.next && !(nvbo->access & NOUVEAU_BO_WR) &&
-				!(access & NOUVEAU_BO_WR))
+	if (!(nvbo->access & NOUVEAU_BO_WR) && !(access & NOUVEAU_BO_WR))
 		return 0;
 
 	return nouveau_bo_fence_wait(bo, access);

@@ -49,7 +49,6 @@ cli_kref_set(struct nouveau_client *, struct nouveau_bo *bo,
 
 struct nouveau_bo_priv {
 	struct nouveau_bo base;
-	struct nouveau_list head;
 	atomic_t refcnt;
 	void* map_addr;
 	uint32_t name;
@@ -66,13 +65,8 @@ nouveau_bo(struct nouveau_bo *bo)
 
 struct nouveau_device_priv {
 	struct nouveau_device base;
-	int close;
-	struct nouveau_list bo_list;
 	uint32_t *client;
 	int nr_client;
-	bool have_bo_usage;
-	int gart_limit_percent, vram_limit_percent;
-	uint64_t allocspace_offset;
 	Mutex lock;
 	NvGpu gpu;
 };
