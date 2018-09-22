@@ -276,12 +276,39 @@ nouveau_client_del(struct nouveau_client **pclient)
 	}
 }
 
+static int
+nouveau_bo_fence_wait(struct nouveau_bo *bo, uint32_t access)
+{
+	CALLED();
+	struct nouveau_bo_priv *nvbo = nouveau_bo(bo);
+	int ret = 0;
+
+	if ((s32)nvbo->fence.id >= 0) {
+		TRACE("waiting on fence {%d,%u}\n", (int)nvbo->fence.id, nvbo->fence.value);
+		Result res = nvFenceWait(&nvbo->fence, (access & NOUVEAU_BO_NOBLOCK) ? 0 : -1);
+		if (R_FAILED(res))
+			ret = -EAGAIN;
+		else {
+			// Reset the fence since we're done with it.
+			nvbo->fence.id = -1;
+			nvbo->fence.value = 0;
+
+			// TODO: Check for NOUVEAU_BO_WR - maybe we're supposed to flush cache?
+		}
+	}
+
+	if (ret == 0)
+		nvbo->access = 0;
+	return ret;
+}
+
 static void
 nouveau_bo_del(struct nouveau_bo *bo)
 {
 	CALLED();
 	struct nouveau_bo_priv *nvbo = nouveau_bo(bo);
 
+	nouveau_bo_fence_wait(bo, 0);
 	if (nvbo->buffer.has_init)
 		nvBufferFree(&nvbo->buffer);
 	free(nvbo);
@@ -458,7 +485,6 @@ nouveau_bo_wait(struct nouveau_bo *bo, uint32_t access,
 	CALLED();
 	struct nouveau_bo_priv *nvbo = nouveau_bo(bo);
 	struct nouveau_pushbuf *push;
-	int ret = 0;
 
 	if (!(access & NOUVEAU_BO_RDWR))
 		return 0;
@@ -471,23 +497,7 @@ nouveau_bo_wait(struct nouveau_bo *bo, uint32_t access,
 				!(access & NOUVEAU_BO_WR))
 		return 0;
 
-	if ((s32)nvbo->fence.id >= 0) {
-		TRACE("waiting on fence {%d,%u}\n", (int)nvbo->fence.id, nvbo->fence.value);
-		Result res = nvFenceWait(&nvbo->fence, (access & NOUVEAU_BO_NOBLOCK) ? 0 : -1);
-		if (R_FAILED(res))
-			ret = -EAGAIN;
-		else {
-			// Reset the fence since we're done with it.
-			nvbo->fence.id = -1;
-			nvbo->fence.value = 0;
-
-			// TODO: Check for NOUVEAU_BO_WR - maybe we're supposed to flush cache?
-		}
-	}
-
-	if (ret == 0)
-		nvbo->access = 0;
-	return ret;
+	return nouveau_bo_fence_wait(bo, access);
 }
 
 int
