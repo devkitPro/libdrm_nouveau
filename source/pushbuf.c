@@ -59,8 +59,9 @@ struct nouveau_pushbuf_priv {
 	struct nouveau_pushbuf_krec *krec;
 	struct nouveau_list bctx_list;
 	struct nouveau_bo *bo;
-	NvBuffer fence_buf;
+	NvBuffer builtin_cmdbuf;
 	u32 fence_num_cmds;
+	u32 flush_num_cmds;
 	uint32_t type;
 	uint32_t *ptr;
 	uint32_t *bgn;
@@ -223,7 +224,7 @@ pushbuf_submit(struct nouveau_pushbuf *push, struct nouveau_object *chan)
 
 		// Append the command list used to increase the fence syncpoint to the gpfifo.
 		nvGpfifoAppendEntry(&nvdev->gpu.gpfifo,
-			nvBufferGetGpuAddr(&nvpb->fence_buf), nvpb->fence_num_cmds,
+			nvBufferGetGpuAddr(&nvpb->builtin_cmdbuf), nvpb->fence_num_cmds,
 			GPFIFO_ENTRY_NOT_MAIN | GPFIFO_ENTRY_NO_PREFETCH);
 
 		// Flush the gpfifo.
@@ -249,6 +250,17 @@ pushbuf_submit(struct nouveau_pushbuf *push, struct nouveau_object *chan)
 			if (kref->read_domains)
 				nvbo->access |= NOUVEAU_BO_RD;
 		}
+
+		// Append the command list used to flush GPU caches, which will be used by the next pushbuf_submit.
+		nvGpfifoAppendEntry(&nvdev->gpu.gpfifo,
+			nvBufferGetGpuAddr(&nvpb->builtin_cmdbuf)+4*nvpb->fence_num_cmds, nvpb->flush_num_cmds,
+			GPFIFO_ENTRY_NOT_MAIN);
+
+		// Append a dummy NOP cmdlist with NO_PREFETCH set (used as a barrier), to make sure that all
+		// further submitted cmdlists see the effects of the previous cache flushing cmdlist.
+		nvGpfifoAppendEntry(&nvdev->gpu.gpfifo,
+			nvBufferGetGpuAddr(&nvpb->builtin_cmdbuf)+4*(nvpb->fence_num_cmds+nvpb->flush_num_cmds), 1,
+			GPFIFO_ENTRY_NOT_MAIN | GPFIFO_ENTRY_NO_PREFETCH);
 
 		krec = krec->next;
 	}
@@ -384,15 +396,29 @@ pushbuf_validate(struct nouveau_pushbuf *push, bool retry)
 }
 
 static u32
-generate_fence_cmdlist(u32* fence_buf, u32 syncpt_id)
+generate_fence_cmdlist(u32* buf_start, u32 syncpt_id)
 {
-	u32* cmd = fence_buf;
+	u32* cmd = buf_start;
 	*cmd++ = 0x451 | (0 << 13) | (0 << 16) | (4 << 29);
 	*cmd++ = 0x0B2 | (0 << 13) | (1 << 16) | (1 << 29);
-	*cmd++ = syncpt_id | (1 << 20);
-	*cmd++ = 0x451 | (0 << 13) | (0 << 16) | (4 << 29);
-	*cmd++ = 0x3E0 | (0 << 13) | (0 << 16) | (4 << 29);
-	return cmd - fence_buf;
+	*cmd++ = syncpt_id | (1 << 20) | (1 << 16); // bit20 = syncpt incr, bit16 = gpu cache flush?
+	return cmd - buf_start;
+}
+
+static u32
+generate_flush_cmdlist(u32* buf_start)
+{
+	u32* cmd = buf_start;
+	*cmd++ = 0x00B | (6 << 13) | (1 << 16) | (1 << 29);      // ??
+	*cmd++ = 0x80000000;
+	*cmd++ = 0x00B | (6 << 13) | (1 << 16) | (1 << 29);      // ??
+	*cmd++ = 0x70000000;
+	*cmd++ = 0x4A2 | (0 << 13) | (0 << 16) | (4 << 29);      // InvalidateTextureDataNoWfi
+	*cmd++ = 0x369 | (0 << 13) | (0x1011 << 16) | (4 << 29); // unknown flush
+	*cmd++ = 0x50A | (0 << 13) | (0 << 16) | (4 << 29);      // flush TICs
+	*cmd++ = 0x509 | (0 << 13) | (0 << 16) | (4 << 29);      // flush TSCs
+	*cmd = 0; // also writes a dummy NOP cmdword
+	return cmd - buf_start;
 }
 
 int
@@ -432,17 +458,19 @@ nouveau_pushbuf_new(struct nouveau_client *client, struct nouveau_object *chan,
 		}
 	}
 
-	Result res = nvBufferCreate(&nvpb->fence_buf,
-		0x1000, 0x1000, false, NvKind_Pitch,
+	Result res = nvBufferCreate(&nvpb->builtin_cmdbuf,
+		0x1000, 0x1000, false, false, NvKind_Pitch,
 		&nvdev->gpu.addr_space);
 	if (R_FAILED(res)) {
 		nouveau_pushbuf_del(&push);
 		return -ENOMEM;
 	}
 
-	nvpb->fence_num_cmds = generate_fence_cmdlist(
-		nvBufferGetCpuAddr(&nvpb->fence_buf),
-		nvdev->gpu.gpfifo.syncpt_id);
+	u32* cmds = nvBufferGetCpuAddr(&nvpb->builtin_cmdbuf);
+	nvpb->fence_num_cmds = generate_fence_cmdlist(cmds, nvdev->gpu.gpfifo.syncpt_id);
+
+	cmds += nvpb->fence_num_cmds;
+	nvpb->flush_num_cmds = generate_flush_cmdlist(cmds);
 
 	DRMINITLISTHEAD(&nvpb->bctx_list);
 	*ppush = push;
@@ -458,7 +486,7 @@ nouveau_pushbuf_del(struct nouveau_pushbuf **ppush)
 	if (nvpb) {
 		struct drm_nouveau_gem_pushbuf_bo *kref;
 		struct nouveau_pushbuf_krec *krec;
-		nvBufferFree(&nvpb->fence_buf);
+		nvBufferFree(&nvpb->builtin_cmdbuf);
 		while ((krec = nvpb->list)) {
 			kref = krec->buffer;
 			while (krec->nr_buffer--) {

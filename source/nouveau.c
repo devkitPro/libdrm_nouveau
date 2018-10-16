@@ -155,6 +155,7 @@ nouveau_drm_new(int fd, struct nouveau_drm **pdrm)
 	}
 
 	drm->fd = fd;
+	drm->version = 0x01000202;
 	*pdrm = drm;
 	return 0;
 }
@@ -206,8 +207,15 @@ nouveau_device_del(struct nouveau_device **pdev)
 int
 nouveau_getparam(struct nouveau_device *dev, uint64_t param, uint64_t *value)
 {
-  /* NOUVEAU_GETPARAM_PTIMER_TIME = NVGPU_GPU_IOCTL_GET_GPU_TIME */
-	return 0;
+	/* NOUVEAU_GETPARAM_PTIMER_TIME = NVGPU_GPU_IOCTL_GET_GPU_TIME */
+	int ret = 0;
+	if (param == NOUVEAU_GETPARAM_GRAPH_UNITS)
+		*value = (16 << 8) | 4;
+	else if (param == NOUVEAU_GETPARAM_PCI_DEVICE)
+		*value = 0; // dummy
+	else
+		ret = -EINVAL;
+	return ret;
 }
 
 /* Unused
@@ -336,7 +344,7 @@ nouveau_bo_new(struct nouveau_device *dev, uint32_t flags, uint32_t align,
 		kind = (NvKind)config->nvc0.memtype;
 
 	TRACE("Allocating BO of size %ld, align %d, flags 0x%x and kind 0x%x\n", size, align, flags, kind);
-	rc = nvBufferCreate(&nvbo->buffer, size, align, false, kind, &nvdev->gpu.addr_space);
+	rc = nvBufferCreate(&nvbo->buffer, size, align, false, !(flags & NOUVEAU_BO_COHERENT), kind, &nvdev->gpu.addr_space);
 	if (R_FAILED(rc))
 	{
 		TRACE("Failed to create NvBuffer (%x)\n", rc);
@@ -405,8 +413,9 @@ nouveau_bo_name_ref(struct nouveau_device *dev, uint32_t name,
 	struct nouveau_bo *bo = &nvbo->base;
 	Result rc;
 
-	rc = nvAddressSpaceMapBuffer(&nvdev->gpu.addr_space, name, 0, //NvMapBufferFlags_IsCacheable,
-		NvKind_Generic_16BX2, &bo->offset);
+	NvKind kind = NvKind_Generic_16BX2; // NvKind_C32_2C or NvKind_C32_2CRA could be used here, but they need special support that nouveau seems to lack.
+	rc = nvAddressSpaceMapBuffer(&nvdev->gpu.addr_space, name, NvMapBufferFlags_IsCacheable,
+		kind, &bo->offset);
 	if (R_FAILED(rc))
 	{
 		TRACE("Failed to map named buffer (%x)\n", rc);
@@ -420,7 +429,7 @@ nouveau_bo_name_ref(struct nouveau_device *dev, uint32_t name,
 	nvbo->fence.id = UINT32_MAX;
 	*pbo = bo;
 
-	bo->config.nvc0.memtype = NvKind_Generic_16BX2;
+	bo->config.nvc0.memtype = kind;
 	bo->config.nvc0.tile_mode = 0x040;
 	return 0;
 }
