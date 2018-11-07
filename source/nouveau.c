@@ -414,8 +414,7 @@ nouveau_bo_name_ref(struct nouveau_device *dev, uint32_t name,
 	Result rc;
 
 	NvKind kind = NvKind_Generic_16BX2; // NvKind_C32_2C or NvKind_C32_2CRA could be used here, but they need special support that nouveau seems to lack.
-	rc = nvAddressSpaceMapBuffer(&nvdev->gpu.addr_space, name, NvMapBufferFlags_IsCacheable,
-		kind, &bo->offset);
+	rc = nvAddressSpaceMap(&nvdev->gpu.addr_space, name, true, kind, &bo->offset);
 	if (R_FAILED(rc))
 	{
 		TRACE("Failed to map named buffer (%x)\n", rc);
