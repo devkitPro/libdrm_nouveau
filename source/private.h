@@ -53,7 +53,7 @@ struct nouveau_bo_priv {
 	void* map_addr;
 	uint32_t name;
 	uint32_t access;
-	NvBuffer buffer;
+	NvMap map;
 	NvFence fence;
 };
 
@@ -68,7 +68,7 @@ struct nouveau_device_priv {
 	uint32_t *client;
 	int nr_client;
 	Mutex lock;
-	NvGpu gpu;
+	NvAddressSpace addr_space;
 };
 
 static inline struct nouveau_device_priv *

@@ -176,16 +176,41 @@ nouveau_device_new(struct nouveau_object *parent, int32_t oclass,
 	nvdev->base.object.handle = ~0ULL;
 	nvdev->base.object.oclass = NOUVEAU_DEVICE_CLASS;
 	nvdev->base.object.length = ~0;
-	nvdev->base.chipset = 0x120; // NVGPU_GPU_ARCH_GM200
 
-	rc = nvGpuCreate(&nvdev->gpu);
+	rc = nvInitialize();
+	if (R_SUCCEEDED(rc))
+	{
+		rc = nvFenceInit();
+		if (R_SUCCEEDED(rc))
+		{
+			rc = nvMapInit();
+			if (R_SUCCEEDED(rc))
+			{
+				rc = nvInfoInit();
+				if (R_SUCCEEDED(rc))
+				{
+					const nvioctl_gpu_characteristics* info = nvInfoGetGpuCharacteristics();
+					nvdev->base.chipset = info->arch; // should be 0x120 (NVGPU_GPU_ARCH_GM200)
+					rc = nvAddressSpaceCreate(&nvdev->addr_space, info->big_page_size);
+					if (R_FAILED(rc))
+						nvInfoExit();
+				}
+				if (R_FAILED(rc))
+					nvMapExit();
+			}
+			if (R_FAILED(rc))
+				nvFenceExit();
+		}
+		if (R_FAILED(rc))
+			nvExit();
+	}
+
 	if (R_FAILED(rc))
 	{
-		TRACE("Failed to create GPU.");
+		free(nvdev);
 		return -rc;
 	}
 
-	mutexInit(&nvdev->lock);
 	return 0;
 }
 
@@ -195,9 +220,12 @@ nouveau_device_del(struct nouveau_device **pdev)
 	CALLED();
 	struct nouveau_device_priv *nvdev = nouveau_device(*pdev);
 
-	nvGpuClose(&nvdev->gpu);
-
 	if (nvdev) {
+		nvAddressSpaceClose(&nvdev->addr_space);
+		nvInfoExit();
+		nvMapExit();
+		nvFenceExit();
+		nvExit();
 		free(nvdev->client);
 		free(nvdev);
 		*pdev = NULL;
@@ -314,10 +342,15 @@ nouveau_bo_del(struct nouveau_bo *bo)
 {
 	CALLED();
 	struct nouveau_bo_priv *nvbo = nouveau_bo(bo);
+	struct nouveau_device_priv *nvdev = nouveau_device(bo->device);
 
 	nouveau_bo_fence_wait(bo, 0);
-	if (nvbo->buffer.has_init)
-		nvBufferFree(&nvbo->buffer);
+	nvAddressSpaceUnmap(&nvdev->addr_space, bo->offset);
+	if (nvbo->map.has_init)
+	{
+		nvMapFree(&nvbo->map);
+		free(nvbo->map_addr);
+	}
 	free(nvbo);
 }
 
@@ -333,8 +366,9 @@ nouveau_bo_new(struct nouveau_device *dev, uint32_t flags, uint32_t align,
 	struct nouveau_bo *bo = &nvbo->base;
 	Result rc;
 
-	if (align == 0)
+	if (align < 0x1000)
 		align = 0x1000;
+	size = (size + 0xFFF) &~ 0xFFF;
 
 	if (!nvbo)
 		return -ENOMEM;
@@ -344,33 +378,40 @@ nouveau_bo_new(struct nouveau_device *dev, uint32_t flags, uint32_t align,
 		kind = (NvKind)config->nvc0.memtype;
 
 	TRACE("Allocating BO of size %ld, align %d, flags 0x%x and kind 0x%x\n", size, align, flags, kind);
-	rc = nvBufferCreate(&nvbo->buffer, size, align, false, !(flags & NOUVEAU_BO_COHERENT), kind, &nvdev->gpu.addr_space);
+	void* mem = memalign(0x1000, size);
+	if (!mem)
+	{
+		TRACE("Out of memory\n");
+		free(nvbo);
+		return -ENOMEM;
+	}
+
+	rc = nvMapCreate(&nvbo->map, mem, size, align, kind, false);
 	if (R_FAILED(rc))
 	{
-		TRACE("Failed to create NvBuffer (%x)\n", rc);
+		TRACE("Failed to create nvmap object (%x)\n", rc);
+		free(mem);
 		free(nvbo);
 		return -rc;
 	}
 
-	if (kind != NvKind_Pitch)
+	rc = nvAddressSpaceMap(&nvdev->addr_space, nvMapGetHandle(&nvbo->map), !(flags & NOUVEAU_BO_COHERENT), kind, &bo->offset);
+	if (R_FAILED(rc))
 	{
-		rc = nvBufferMapAsTexture(&nvbo->buffer, kind);
-		if (R_FAILED(rc))
-		{
-			TRACE("Failed to map NvBuffer as texture (%x)\n", rc);
-			free(nvbo);
-			return -rc;
-		}
+		TRACE("Failed to map object to address space (%x)\n", rc);
+		nvMapFree(&nvbo->map);
+		free(mem);
+		free(nvbo);
+		return -rc;
 	}
 
 	atomic_set(&nvbo->refcnt, 1);
 	bo->device = dev;
-	bo->handle = nvbo->buffer.fd;
-	bo->size = nvbo->buffer.size;
+	bo->handle = nvMapGetHandle(&nvbo->map);
+	bo->size = size;
 	bo->flags = flags;
-	bo->offset = kind != NvKind_Pitch ? nvBufferGetGpuAddrTexture(&nvbo->buffer) : nvBufferGetGpuAddr(&nvbo->buffer);
 	bo->map = NULL;
-	nvbo->map_addr = nvBufferGetCpuAddr(&nvbo->buffer);
+	nvbo->map_addr = mem;
 	nvbo->fence.id = UINT32_MAX;
 	memset(nvbo->map_addr, 0, bo->size);
 
@@ -414,7 +455,7 @@ nouveau_bo_name_ref(struct nouveau_device *dev, uint32_t name,
 	Result rc;
 
 	NvKind kind = NvKind_Generic_16BX2; // NvKind_C32_2C or NvKind_C32_2CRA could be used here, but they need special support that nouveau seems to lack.
-	rc = nvAddressSpaceMap(&nvdev->gpu.addr_space, name, true, kind, &bo->offset);
+	rc = nvAddressSpaceMap(&nvdev->addr_space, name, true, kind, &bo->offset);
 	if (R_FAILED(rc))
 	{
 		TRACE("Failed to map named buffer (%x)\n", rc);

@@ -59,7 +59,8 @@ struct nouveau_pushbuf_priv {
 	struct nouveau_pushbuf_krec *krec;
 	struct nouveau_list bctx_list;
 	struct nouveau_bo *bo;
-	NvBuffer builtin_cmdbuf;
+	struct nouveau_bo *bo_zcullctx, *bo_builtin_cmdbuf;
+	NvGpuChannel gpu_channel;
 	u32 fence_num_cmds;
 	u32 flush_num_cmds;
 	uint32_t type;
@@ -186,8 +187,6 @@ pushbuf_submit(struct nouveau_pushbuf *push, struct nouveau_object *chan)
 	CALLED();
 	struct nouveau_pushbuf_priv *nvpb = nouveau_pushbuf(push);
 	struct nouveau_pushbuf_krec *krec = nvpb->list;
-	struct nouveau_device *dev = push->client->device;
-	struct nouveau_device_priv *nvdev = nouveau_device(dev);
 	struct drm_nouveau_gem_pushbuf_bo *kref;
 	struct drm_nouveau_gem_pushbuf_push *kpsh;
 	struct nouveau_fifo *fifo = chan->data;
@@ -215,29 +214,31 @@ pushbuf_submit(struct nouveau_pushbuf *push, struct nouveau_object *chan)
 			kref = krec->buffer + kpsh->bo_index;
 			bo = kref->bo;
 
-			// Append the entry to the gpfifo.
-			nvGpfifoAppendEntry(&nvdev->gpu.gpfifo,
+			// Append the entry.
+			nvGpuChannelAppendEntry(&nvpb->gpu_channel,
 				bo->offset + kpsh->offset,
 				kpsh->length / 4,
-				GPFIFO_ENTRY_NOT_MAIN);
+				GPFIFO_ENTRY_NOT_MAIN, 0);
 		}
 
-		// Append the command list used to increase the fence syncpoint to the gpfifo.
-		nvGpfifoAppendEntry(&nvdev->gpu.gpfifo,
-			nvBufferGetGpuAddr(&nvpb->builtin_cmdbuf), nvpb->fence_num_cmds,
-			GPFIFO_ENTRY_NOT_MAIN | GPFIFO_ENTRY_NO_PREFETCH);
+		// Append the command list used to increase the fence syncpoint.
+		nvGpuChannelIncrFence(&nvpb->gpu_channel);
+		nvGpuChannelAppendEntry(&nvpb->gpu_channel,
+			nvpb->bo_builtin_cmdbuf->offset, nvpb->fence_num_cmds,
+			GPFIFO_ENTRY_NOT_MAIN | GPFIFO_ENTRY_NO_PREFETCH, 0);
 
-		// Flush the gpfifo.
+		// Flush the GPU channel.
 		NvFence fence;
-		TRACE("Submitting %u entries to gpfifo\n", nvdev->gpu.gpfifo.num_entries);
-		rc = nvGpfifoFlush(&nvdev->gpu.gpfifo, 1, &fence);
+		TRACE("Submitting %u entries to GPU channel\n", nvpb->gpu_channel.num_entries);
+		rc = nvGpuChannelKickoff(&nvpb->gpu_channel);
 		if (R_FAILED(rc)) {
-			TRACE("nvGpfifo rejected pushbuf: %x\n", rc);
+			TRACE("GPU channel rejected pushbuf: %x\n", rc);
 			pushbuf_dump(krec, krec_id++, fifo->channel);
 			return -rc;
 		}
 
 		// Store the fence in all referenced bos.
+		nvGpuChannelGetFence(&nvpb->gpu_channel, &fence);
 		TRACE("Received fence {%d,%u}\n", (int)fence.id, fence.value);
 		kref = krec->buffer;
 		for (i = 0; i < krec->nr_buffer; i++, kref++) {
@@ -252,15 +253,15 @@ pushbuf_submit(struct nouveau_pushbuf *push, struct nouveau_object *chan)
 		}
 
 		// Append the command list used to flush GPU caches, which will be used by the next pushbuf_submit.
-		nvGpfifoAppendEntry(&nvdev->gpu.gpfifo,
-			nvBufferGetGpuAddr(&nvpb->builtin_cmdbuf)+4*nvpb->fence_num_cmds, nvpb->flush_num_cmds,
-			GPFIFO_ENTRY_NOT_MAIN);
+		nvGpuChannelAppendEntry(&nvpb->gpu_channel,
+			nvpb->bo_builtin_cmdbuf->offset+4*nvpb->fence_num_cmds, nvpb->flush_num_cmds,
+			GPFIFO_ENTRY_NOT_MAIN, 0);
 
 		// Append a dummy NOP cmdlist with NO_PREFETCH set (used as a barrier), to make sure that all
 		// further submitted cmdlists see the effects of the previous cache flushing cmdlist.
-		nvGpfifoAppendEntry(&nvdev->gpu.gpfifo,
-			nvBufferGetGpuAddr(&nvpb->builtin_cmdbuf)+4*(nvpb->fence_num_cmds+nvpb->flush_num_cmds), 1,
-			GPFIFO_ENTRY_NOT_MAIN | GPFIFO_ENTRY_NO_PREFETCH);
+		nvGpuChannelAppendEntry(&nvpb->gpu_channel,
+			nvpb->bo_builtin_cmdbuf->offset+4*(nvpb->fence_num_cmds+nvpb->flush_num_cmds), 1,
+			GPFIFO_ENTRY_NOT_MAIN | GPFIFO_ENTRY_NO_PREFETCH, 0);
 
 		krec = krec->next;
 	}
@@ -458,16 +459,37 @@ nouveau_pushbuf_new(struct nouveau_client *client, struct nouveau_object *chan,
 		}
 	}
 
-	Result res = nvBufferCreate(&nvpb->builtin_cmdbuf,
-		0x1000, 0x1000, false, false, NvKind_Pitch,
-		&nvdev->gpu.addr_space);
-	if (R_FAILED(res)) {
+	ret = nouveau_bo_new(client->device, NOUVEAU_BO_GART, 0x20000, 0x1000, NULL, &nvpb->bo_builtin_cmdbuf);
+	if (ret) {
+		TRACE("Failed to create BO for the built-in cmdbuf (%d)\n", ret);
 		nouveau_pushbuf_del(&push);
-		return -ENOMEM;
+		return ret;
 	}
 
-	u32* cmds = nvBufferGetCpuAddr(&nvpb->builtin_cmdbuf);
-	nvpb->fence_num_cmds = generate_fence_cmdlist(cmds, nvdev->gpu.gpfifo.syncpt_id);
+	ret = nouveau_bo_new(client->device, NOUVEAU_BO_GART, 0x20000, nvInfoGetZcullCtxSize(), NULL, &nvpb->bo_zcullctx);
+	if (ret) {
+		TRACE("Failed to create BO for the Zcull context (%d)\n", ret);
+		nouveau_pushbuf_del(&push);
+		return ret;
+	}
+
+	Result res = nvGpuChannelCreate(&nvpb->gpu_channel, &nvdev->addr_space);
+	if (R_FAILED(res)) {
+		TRACE("Failed to create GPU channel (%x)\n", res);
+		nouveau_pushbuf_del(&push);
+		return -res;
+	}
+
+	res = nvGpuChannelZcullBind(&nvpb->gpu_channel, nvpb->bo_zcullctx->offset);
+	if (R_FAILED(res)) {
+		TRACE("Failed to bind Zcull context to GPU channel (%x)\n", res);
+		nouveau_pushbuf_del(&push);
+		return -res;
+	}
+
+	nouveau_bo_map(nvpb->bo_builtin_cmdbuf, NOUVEAU_BO_WR, client);
+	u32* cmds = (u32*)nvpb->bo_builtin_cmdbuf->map;
+	nvpb->fence_num_cmds = generate_fence_cmdlist(cmds, nvGpuChannelGetSyncpointId(&nvpb->gpu_channel));
 
 	cmds += nvpb->fence_num_cmds;
 	nvpb->flush_num_cmds = generate_flush_cmdlist(cmds);
@@ -486,7 +508,9 @@ nouveau_pushbuf_del(struct nouveau_pushbuf **ppush)
 	if (nvpb) {
 		struct drm_nouveau_gem_pushbuf_bo *kref;
 		struct nouveau_pushbuf_krec *krec;
-		nvBufferFree(&nvpb->builtin_cmdbuf);
+		nvGpuChannelClose(&nvpb->gpu_channel);
+		nouveau_bo_ref(NULL, &nvpb->bo_zcullctx);
+		nouveau_bo_ref(NULL, &nvpb->bo_builtin_cmdbuf);
 		while ((krec = nvpb->list)) {
 			kref = krec->buffer;
 			while (krec->nr_buffer--) {
