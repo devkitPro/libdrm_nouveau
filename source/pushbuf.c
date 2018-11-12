@@ -466,7 +466,7 @@ nouveau_pushbuf_new(struct nouveau_client *client, struct nouveau_object *chan,
 		return ret;
 	}
 
-	ret = nouveau_bo_new(client->device, NOUVEAU_BO_GART, 0x20000, nvInfoGetZcullCtxSize(), NULL, &nvpb->bo_zcullctx);
+	ret = nouveau_bo_new(client->device, NOUVEAU_BO_GART, 0x20000, nvGpuGetZcullCtxSize(), NULL, &nvpb->bo_zcullctx);
 	if (ret) {
 		TRACE("Failed to create BO for the Zcull context (%d)\n", ret);
 		nouveau_pushbuf_del(&push);

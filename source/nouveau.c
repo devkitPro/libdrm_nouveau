@@ -186,14 +186,14 @@ nouveau_device_new(struct nouveau_object *parent, int32_t oclass,
 			rc = nvMapInit();
 			if (R_SUCCEEDED(rc))
 			{
-				rc = nvInfoInit();
+				rc = nvGpuInit();
 				if (R_SUCCEEDED(rc))
 				{
-					const nvioctl_gpu_characteristics* info = nvInfoGetGpuCharacteristics();
+					const nvioctl_gpu_characteristics* info = nvGpuGetCharacteristics();
 					nvdev->base.chipset = info->arch; // should be 0x120 (NVGPU_GPU_ARCH_GM200)
 					rc = nvAddressSpaceCreate(&nvdev->addr_space, info->big_page_size);
 					if (R_FAILED(rc))
-						nvInfoExit();
+						nvGpuExit();
 				}
 				if (R_FAILED(rc))
 					nvMapExit();
@@ -222,7 +222,7 @@ nouveau_device_del(struct nouveau_device **pdev)
 
 	if (nvdev) {
 		nvAddressSpaceClose(&nvdev->addr_space);
-		nvInfoExit();
+		nvGpuExit();
 		nvMapExit();
 		nvFenceExit();
 		nvExit();
@@ -348,7 +348,7 @@ nouveau_bo_del(struct nouveau_bo *bo)
 	nvAddressSpaceUnmap(&nvdev->addr_space, bo->offset);
 	if (nvbo->map.has_init)
 	{
-		nvMapFree(&nvbo->map);
+		nvMapClose(&nvbo->map);
 		free(nvbo->map_addr);
 	}
 	free(nvbo);
@@ -399,7 +399,7 @@ nouveau_bo_new(struct nouveau_device *dev, uint32_t flags, uint32_t align,
 	if (R_FAILED(rc))
 	{
 		TRACE("Failed to map object to address space (%x)\n", rc);
-		nvMapFree(&nvbo->map);
+		nvMapClose(&nvbo->map);
 		free(mem);
 		free(nvbo);
 		return -rc;
