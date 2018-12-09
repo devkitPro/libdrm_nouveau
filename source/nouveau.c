@@ -346,11 +346,9 @@ nouveau_bo_del(struct nouveau_bo *bo)
 
 	nouveau_bo_fence_wait(bo, 0);
 	nvAddressSpaceUnmap(&nvdev->addr_space, bo->offset);
-	if (nvbo->map.has_init)
-	{
-		nvMapClose(&nvbo->map);
+	nvMapClose(&nvbo->map);
+	if (nvbo->map_addr)
 		free(nvbo->map_addr);
-	}
 	free(nvbo);
 }
 
@@ -410,7 +408,6 @@ nouveau_bo_new(struct nouveau_device *dev, uint32_t flags, uint32_t align,
 	bo->handle = nvMapGetHandle(&nvbo->map);
 	bo->size = size;
 	bo->flags = flags;
-	bo->map = NULL;
 	nvbo->map_addr = mem;
 	nvbo->fence.id = UINT32_MAX;
 	memset(nvbo->map_addr, 0, bo->size);
@@ -433,16 +430,16 @@ static void
 nouveau_bo_make_global(struct nouveau_bo_priv *nvbo)
 {
 }
-*/
 
 int
 nouveau_bo_wrap(struct nouveau_device *dev, uint32_t handle,
 		struct nouveau_bo **pbo)
 {
-	// TODO: NV30-only
+	// NV30-only
 	CALLED();
 	return 0;
 }
+*/
 
 int
 nouveau_bo_name_ref(struct nouveau_device *dev, uint32_t name,
@@ -454,18 +451,30 @@ nouveau_bo_name_ref(struct nouveau_device *dev, uint32_t name,
 	struct nouveau_bo *bo = &nvbo->base;
 	Result rc;
 
+	rc = nvMapLoadRemote(&nvbo->map, name);
+	if (R_FAILED(rc))
+	{
+		TRACE("Failed to load nvmap object (%x)\n", rc);
+		free(nvbo);
+		return -rc;
+	}
+
+	u32 handle = nvMapGetHandle(&nvbo->map);
 	NvKind kind = NvKind_Generic_16BX2; // NvKind_C32_2C or NvKind_C32_2CRA could be used here, but they need special support that nouveau seems to lack.
-	rc = nvAddressSpaceMap(&nvdev->addr_space, name, true, kind, &bo->offset);
+	rc = nvAddressSpaceMap(&nvdev->addr_space, handle, true, kind, &bo->offset);
 	if (R_FAILED(rc))
 	{
 		TRACE("Failed to map named buffer (%x)\n", rc);
+		nvMapClose(&nvbo->map);
 		free(nvbo);
 		return -rc;
 	}
 
 	atomic_set(&nvbo->refcnt, 1);
 	bo->device = dev;
-	bo->handle = name;
+	bo->handle = handle;
+	bo->size = nvMapGetSize(&nvbo->map);
+	bo->flags = NOUVEAU_BO_GART;
 	nvbo->fence.id = UINT32_MAX;
 	*pbo = bo;
 
@@ -477,8 +486,10 @@ nouveau_bo_name_ref(struct nouveau_device *dev, uint32_t name,
 int
 nouveau_bo_name_get(struct nouveau_bo *bo, uint32_t *name)
 {
-	// TODO: Unimplemented
 	CALLED();
+	struct nouveau_bo_priv *nvbo = nouveau_bo(bo);
+
+	*name = nvMapGetId(&nvbo->map);
 	return 0;
 }
 
@@ -501,17 +512,15 @@ int
 nouveau_bo_prime_handle_ref(struct nouveau_device *dev, int prime_fd,
 			    struct nouveau_bo **bo)
 {
-	// TODO: Unimplemented
 	CALLED();
-	return 0;
+	return -ENOSYS;
 }
 
 int
 nouveau_bo_set_prime(struct nouveau_bo *bo, int *prime_fd)
 {
-	// TODO: Unimplemented
 	CALLED();
-	return 0;
+	return -ENOSYS;
 }
 
 int
