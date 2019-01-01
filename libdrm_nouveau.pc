@@ -5,6 +5,6 @@ libdir=${exec_prefix}/lib
 
 Name: libdrm_nouveau
 Description: Userspace interface to nouveau kernel DRM services
-Version: 2.4.66
+Version: 2.4.75
 Libs: -L${libdir} -ldrm_nouveau
 Cflags: -I${includedir}
