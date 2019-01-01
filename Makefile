@@ -8,8 +8,8 @@ endif
 
 include $(DEVKITPRO)/libnx/switch_rules
 
-export LIBDRM_NOUVEAU_MAJOR	:= 0
-export LIBDRM_NOUVEAU_MINOR	:= 3
+export LIBDRM_NOUVEAU_MAJOR	:= 1
+export LIBDRM_NOUVEAU_MINOR	:= 0
 export LIBDRM_NOUVEAU_PATCH	:= 0
 
 
