@@ -4,7 +4,7 @@ includedir=${prefix}/include
 libdir=${exec_prefix}/lib
 
 Name: libdrm_nouveau
-Description: Userspace interface to nouveau kernel DRM services
-Version: 2.4.75
+Description: Compatibility shim for nouveau <-> Switch nvservices interaction
+Version: 9.9.99
 Libs: -L${libdir} -ldrm_nouveau
 Cflags: -I${includedir}
