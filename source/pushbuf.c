@@ -281,7 +281,7 @@ pushbuf_flush(struct nouveau_pushbuf *push)
 	int ret = 0, i;
 
 	ret = pushbuf_submit(push, push->channel);
-	
+
 	kref = krec->buffer;
 	for (i = 0; i < krec->nr_buffer; i++, kref++) {
 		bo = kref->bo;
@@ -473,7 +473,7 @@ nouveau_pushbuf_new(struct nouveau_client *client, struct nouveau_object *chan,
 		return ret;
 	}
 
-	Result res = nvGpuChannelCreate(&nvpb->gpu_channel, &nvdev->addr_space);
+	Result res = nvGpuChannelCreate(&nvpb->gpu_channel, &nvdev->addr_space, NvChannelPriority_Medium);
 	if (R_FAILED(res)) {
 		TRACE("Failed to create GPU channel (%x)\n", res);
 		nouveau_pushbuf_del(&push);
